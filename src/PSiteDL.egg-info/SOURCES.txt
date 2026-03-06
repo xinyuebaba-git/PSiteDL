@@ -1,0 +1,11 @@
+README.md
+pyproject.toml
+src/PSiteDL.egg-info/PKG-INFO
+src/PSiteDL.egg-info/SOURCES.txt
+src/PSiteDL.egg-info/dependency_links.txt
+src/PSiteDL.egg-info/entry_points.txt
+src/PSiteDL.egg-info/requires.txt
+src/PSiteDL.egg-info/top_level.txt
+src/webvidgrab/__init__.py
+src/webvidgrab/site_cli.py
+src/webvidgrab/site_gui.py
