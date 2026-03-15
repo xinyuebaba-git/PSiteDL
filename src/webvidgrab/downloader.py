@@ -392,14 +392,24 @@ class ResultAggregator:
 class ConcurrentDownloader:
     """并发下载器"""
 
-    def __init__(self, max_concurrent: int = 5) -> None:
+    def __init__(
+        self,
+        max_concurrent: int = 3,
+        max_retries: int = 3,
+        bandwidth_limit: float = 0,
+    ) -> None:
         """
         初始化并发下载器
 
         Args:
             max_concurrent: 最大并发下载数
+            max_retries: 最大重试次数
+            bandwidth_limit: 带宽限制 (Mbps)，0 表示不限速
         """
         self.max_concurrent = max_concurrent
+        self.max_retries = max_retries
+        self.bandwidth_limit = bandwidth_limit
+        self.bandwidth_limiter = BandwidthLimiter(max_speed_mbps=bandwidth_limit)
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._active_tasks: set[asyncio.Task] = set()
 
@@ -473,6 +483,26 @@ class ConcurrentDownloader:
         # 3. 进度跟踪
         # 4. 错误处理
         raise NotImplementedError("请实现实际的下载逻辑")
+
+    async def download(self, url: str, output_dir: Path) -> DownloadResult:
+        """下载单个 URL（带重试）"""
+        last_error = "unknown error"
+        for attempt in range(self.max_retries + 1):
+            try:
+                result = await self._download_single(url, output_dir)
+                result.retries = attempt
+                return result
+            except Exception as exc:
+                last_error = str(exc)
+                if attempt >= self.max_retries:
+                    break
+
+        return DownloadResult(
+            url=url,
+            success=False,
+            error=last_error,
+            retries=self.max_retries,
+        )
 
     def download_sync(self, url: str, output_dir: Path) -> DownloadResult | None:
         """
@@ -555,7 +585,7 @@ class ConcurrentDownloader:
 class DownloaderConfig:
     """下载器配置"""
 
-    max_concurrent: int = 5  # 最大并发数
+    max_concurrent: int = 3  # 最大并发数
     max_speed_mbps: float = 0  # 带宽限制 (0=无限制)
     max_retries: int = 3  # 最大重试次数
     retry_base_delay: float = 1.0  # 重试基础延迟 (秒)

@@ -117,6 +117,7 @@ psitedl-gui
 | `--timeout` | `-t` | 网络超时 (秒) | `--timeout 60` |
 | `--log-level` | `-l` | 日志级别 | `--log-level DEBUG` |
 | `--config` | `-C` | 配置文件路径 | `--config ~/.psitedl/config.json` |
+| `--version` | - | 查看版本号 | `--version` |
 
 ### `--url-file` 参数详解
 
@@ -206,7 +207,7 @@ psitedl --version
 | 配置项 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
 | `output_dir` | string | ~/Downloads | 输出目录 |
-| `browser` | string | chrome | 浏览器类型 (chrome/firefox/edge/safari) |
+| `browser` | string | chrome | 浏览器类型 (chrome/chromium/edge/brave/firefox/safari) |
 | `profile` | string | Default | 浏览器 Profile 名称 |
 | `concurrency` | int | 3 | 并发下载数 (1-10) |
 | `max_retries` | int | 3 | 失败重试次数 |

@@ -1,16 +1,20 @@
 #!/bin/bash
 # PSiteDL GUI 启动脚本
 
-set -e
+set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$PROJECT_DIR/.venv"
+VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
+BREW_PYTHON="/opt/homebrew/bin/python3.11"
 
-echo "🚀 启动 PSiteDL GUI..."
+echo "启动 PSiteDL GUI..."
 
-# 激活虚拟环境
-source "$VENV_DIR/bin/activate"
-
-# 运行 GUI
 cd "$PROJECT_DIR"
-python -m webvidgrab.site_gui "$@"
+
+if [ -x "$VENV_PYTHON" ]; then
+  exec env TK_SILENCE_DEPRECATION=1 PYTHONPATH="$PROJECT_DIR/src" "$VENV_PYTHON" -m webvidgrab.site_gui "$@"
+elif [ -x "$BREW_PYTHON" ]; then
+  exec env TK_SILENCE_DEPRECATION=1 PYTHONPATH="$PROJECT_DIR/src" "$BREW_PYTHON" -m webvidgrab.site_gui "$@"
+else
+  exec env TK_SILENCE_DEPRECATION=1 PYTHONPATH="$PROJECT_DIR/src" python3 -m webvidgrab.site_gui "$@"
+fi

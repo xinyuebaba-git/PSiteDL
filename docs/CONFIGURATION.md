@@ -53,7 +53,7 @@ psitedl "https://example.com/video" --config /path/to/custom/config.json
 | 配置项 | 类型 | 默认值 | 有效范围 | 说明 |
 |--------|------|--------|----------|------|
 | `output_dir` | string | `~/Downloads` | 有效文件系统路径 | 视频下载输出目录 |
-| `browser` | string | `chrome` | `chrome`, `firefox`, `edge`, `safari` | 用于导出 Cookie 的浏览器类型 |
+| `browser` | string | `chrome` | `chrome`, `chromium`, `edge`, `brave`, `firefox`, `safari` | 用于导出 Cookie 的浏览器类型 |
 | `profile` | string | `Default` | 浏览器 Profile 名称 | 浏览器配置文件名称 |
 
 ### 下载配置

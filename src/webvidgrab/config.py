@@ -45,18 +45,21 @@ __all__ = [
 
 #: 默认配置字典
 DEFAULT_CONFIG: dict[str, Any] = {
-    "output_dir": "./downloads",
+    "output_dir": "~/Downloads",
     "browser": "chrome",
     "profile": "Default",
     "concurrency": 3,
     "max_retries": 3,
     "timeout": 30,
     "log_level": "INFO",
-    "log_file": "./logs/psitedl.log",
+    "log_file": "~/.psitedl/psitedl.log",
+    "bandwidth_limit_mbps": 0.0,
 }
 
 #: 有效的浏览器类型
-VALID_BROWSERS: frozenset[str] = frozenset({"chrome", "firefox", "edge", "safari"})
+VALID_BROWSERS: frozenset[str] = frozenset(
+    {"chrome", "chromium", "edge", "brave", "firefox", "safari"}
+)
 
 #: 有效的日志级别
 VALID_LOG_LEVELS: frozenset[str] = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
@@ -123,6 +126,7 @@ def get_default_config() -> dict[str, Any]:
             - timeout (int): 超时时间 (秒)
             - log_level (str): 日志级别
             - log_file (str): 日志文件路径
+            - bandwidth_limit_mbps (float): 带宽限制 (Mbps)
 
     Example:
         >>> config = get_default_config()
@@ -239,6 +243,9 @@ def validate_config(config: dict[str, Any]) -> bool:
     # 验证超时时间
     _validate_timeout(config.get("timeout", 0))
 
+    # 验证带宽限制
+    _validate_bandwidth_limit(config.get("bandwidth_limit_mbps", 0))
+
     return True
 
 
@@ -326,6 +333,9 @@ def _validate_max_retries(max_retries: Any) -> None:
     if max_retries < 0:
         raise ValueError(f"最大重试次数不能为负数：{max_retries}")
 
+    if max_retries > 10:
+        raise ValueError(f"最大重试次数不能大于 10：{max_retries}")
+
 
 def _validate_timeout(timeout: Any) -> None:
     """验证超时时间。
@@ -341,6 +351,28 @@ def _validate_timeout(timeout: Any) -> None:
 
     if timeout <= 0:
         raise ValueError(f"超时时间必须为正数：{timeout}")
+
+    if timeout > 300:
+        raise ValueError(f"超时时间不能大于 300 秒：{timeout}")
+
+
+def _validate_bandwidth_limit(limit_mbps: Any) -> None:
+    """验证带宽限制。
+
+    Args:
+        limit_mbps: 带宽限制 (Mbps)
+
+    Raises:
+        ValueError: 带宽限制超出范围
+    """
+    if not isinstance(limit_mbps, (int, float)):
+        raise ValueError(f"带宽限制必须是数字：{limit_mbps}")
+
+    if limit_mbps < 0:
+        raise ValueError(f"带宽限制不能为负数：{limit_mbps}")
+
+    if limit_mbps > 1000:
+        raise ValueError(f"带宽限制不能大于 1000 Mbps：{limit_mbps}")
 
 
 # =============================================================================

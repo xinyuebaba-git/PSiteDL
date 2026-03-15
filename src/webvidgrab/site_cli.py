@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import shutil
 import subprocess
@@ -9,15 +10,31 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from importlib import metadata
 from pathlib import Path
+from typing import Any
 from urllib import parse as urlparse
 from urllib import request as urlrequest
+
+from .config import ConfigError, get_default_config, load_config, merge_configs, validate_config
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
 )
+
+DEFAULT_CONFIG_PATH = Path("~/.psitedl/config.json").expanduser()
+
+
+def _resolve_app_version() -> str:
+    try:
+        return metadata.version("PSiteDL")
+    except metadata.PackageNotFoundError:
+        return "0.4.0"
+
+
+APP_VERSION = _resolve_app_version()
 
 
 @dataclass
@@ -30,12 +47,12 @@ class ProbeResult:
     ok: bool
 
 
-def _fetch_text(url: str, referer: str | None = None) -> str:
+def _fetch_text(url: str, referer: str | None = None, timeout: int = 30) -> str:
     headers = {"User-Agent": DEFAULT_UA, "Accept": "*/*"}
     if referer:
         headers["Referer"] = referer
     req = urlrequest.Request(url, headers=headers)
-    with urlrequest.urlopen(req, timeout=25) as resp:
+    with urlrequest.urlopen(req, timeout=max(1, timeout)) as resp:
         charset = resp.headers.get_content_charset() or "utf-8"
         result: str = resp.read().decode(charset, errors="ignore")
         return result
@@ -513,7 +530,7 @@ def _capture_runtime_candidates(
     return dedup
 
 
-def _probe_height(url: str, referer: str, log_lines: list[str]) -> int:
+def _probe_height(url: str, referer: str, log_lines: list[str], timeout_sec: int) -> int:
     ytdlp_cmd = _resolve_ytdlp_cmd()
     if not ytdlp_cmd:
         return 0
@@ -523,10 +540,22 @@ def _probe_height(url: str, referer: str, log_lines: list[str]) -> int:
         f"Referer:{referer}",
         "--add-header",
         f"User-Agent:{DEFAULT_UA}",
+        "--socket-timeout",
+        str(max(1, timeout_sec)),
         "--list-formats",
         url,
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=max(5, timeout_sec),
+        )
+    except subprocess.TimeoutExpired:
+        log_lines.append(f"[probe-candidate] {url}")
+        log_lines.append("[probe-candidate-exit] timeout")
+        return 0
     log_lines.append(f"[probe-candidate] {url}")
     log_lines.append(f"[probe-candidate-exit] {proc.returncode}")
     log_lines.append(proc.stdout or "")
@@ -545,6 +574,13 @@ def _probe_height(url: str, referer: str, log_lines: list[str]) -> int:
 
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text or "")
+
+
+def _mbps_to_rate_limit(mbps: float) -> str | None:
+    if mbps <= 0:
+        return None
+    bytes_per_second = max(1, int((mbps * 1024 * 1024) / 8))
+    return str(bytes_per_second)
 
 
 def _output_template(preferred_title: str | None) -> str:
@@ -578,6 +614,9 @@ def _download_with_ytdlp(
     output_dir: Path,
     preferred_title: str | None,
     log_lines: list[str],
+    timeout_sec: int = 30,
+    max_retries: int = 3,
+    bandwidth_limit_mbps: float = 0.0,
     progress_callback: Callable[[int, int | None], None] | None = None,
 ) -> Path | None:
     ytdlp_cmd = _resolve_ytdlp_cmd()
@@ -586,11 +625,18 @@ def _download_with_ytdlp(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     existing_names = {p.name for p in output_dir.glob("*") if p.is_file()}
+    rate_limit = _mbps_to_rate_limit(bandwidth_limit_mbps)
     cmd = [
         *ytdlp_cmd,
         "--no-playlist",
         "--newline",
         "--progress",
+        "--socket-timeout",
+        str(max(1, timeout_sec)),
+        "--retries",
+        str(max(0, max_retries)),
+        "--fragment-retries",
+        str(max(0, max_retries)),
         "--progress-template",
         "download:[site-progress] %(progress.fragment_index)s/%(progress.fragment_count)s",
         "--add-header",
@@ -607,6 +653,8 @@ def _download_with_ytdlp(
         "after_move:filepath",
         target_url,
     ]
+    if rate_limit:
+        cmd[1:1] = ["--limit-rate", rate_limit]
 
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
@@ -702,6 +750,9 @@ def run_site_download(
     browser: str = "chrome",
     profile: str = "Default",
     capture_seconds: int = 30,
+    timeout: int = 30,
+    max_retries: int = 3,
+    bandwidth_limit_mbps: float = 0.0,
     use_runtime_capture: bool = True,
     log_func: Callable[[str], None] | None = None,
     progress_callback: Callable[[int, int | None], None] | None = None,
@@ -726,7 +777,7 @@ def run_site_download(
     try:
         log(f"[url] {page_url}")
         log(f"[browser] {browser}:{profile or '(default)'}")
-        html = _fetch_text(page_url, referer=page_url)
+        html = _fetch_text(page_url, referer=page_url, timeout=max(1, timeout))
         page_title = _extract_page_title(html)
         log(f"[page-title] {page_title or '(none)'}")
 
@@ -750,7 +801,9 @@ def run_site_download(
         best_url = None
         best_score = -1
         for c in all_candidates[:20]:
-            score = _candidate_score(c) + _probe_height(c, page_url, log_lines)
+            score = _candidate_score(c) + _probe_height(
+                c, page_url, log_lines, timeout_sec=max(1, timeout)
+            )
             if score > best_score:
                 best_score = score
                 best_url = c
@@ -763,6 +816,9 @@ def run_site_download(
             output_dir=output_dir,
             preferred_title=page_title,
             log_lines=log_lines,
+            timeout_sec=max(1, timeout),
+            max_retries=max(0, max_retries),
+            bandwidth_limit_mbps=max(0.0, bandwidth_limit_mbps),
             progress_callback=progress_callback,
         )
         if output is None and download_target != page_url:
@@ -773,6 +829,9 @@ def run_site_download(
                 output_dir=output_dir,
                 preferred_title=page_title,
                 log_lines=log_lines,
+                timeout_sec=max(1, timeout),
+                max_retries=max(0, max_retries),
+                bandwidth_limit_mbps=max(0.0, bandwidth_limit_mbps),
                 progress_callback=progress_callback,
             )
     except Exception as exc:
@@ -792,17 +851,48 @@ def run_site_download(
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Probe and download segmented video from webpage.")
+    p.add_argument("--version", action="version", version=f"PSiteDL {APP_VERSION}")
     p.add_argument("url", nargs="?", help="Webpage playback URL")
     p.add_argument(
         "--url-file",
+        "-f",
         type=Path,
         default=None,
         help="Text file containing one or more playback URLs (one per line)",
     )
-    p.add_argument("--output-dir", type=Path, default=Path.home() / "Downloads")
-    p.add_argument("--browser", default="chrome", choices=["chrome", "chromium", "edge", "brave"])
-    p.add_argument("--profile", default="Default")
+    p.add_argument(
+        "--config",
+        "-C",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="Path to config JSON file (default: ~/.psitedl/config.json)",
+    )
+    p.add_argument("--output-dir", "-o", type=Path, default=None)
+    p.add_argument(
+        "--browser",
+        "-b",
+        default=None,
+        choices=["chrome", "chromium", "edge", "brave", "firefox", "safari"],
+    )
+    p.add_argument("--profile", "-p", default=None)
     p.add_argument("--capture-seconds", type=int, default=30)
+    p.add_argument("--timeout", "-t", type=int, default=None, help="Network timeout (seconds)")
+    p.add_argument("--max-retries", "-r", type=int, default=None, help="Max retry count")
+    p.add_argument(
+        "--bandwidth-limit",
+        "-B",
+        dest="bandwidth_limit_mbps",
+        type=float,
+        default=None,
+        help="Download speed limit in Mbps (0 = unlimited)",
+    )
+    p.add_argument(
+        "--log-level",
+        "-l",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default=None,
+        help="Console log level",
+    )
     p.add_argument("--no-runtime-capture", action="store_true")
     p.add_argument(
         "--check-duplicates",
@@ -817,10 +907,13 @@ def parse_args() -> argparse.Namespace:
         help="Disable duplicate URL checking",
     )
     p.add_argument(
+        "--concurrency",
         "--max-concurrent",
+        "-c",
+        dest="max_concurrent",
         type=int,
-        default=3,
-        help="Maximum concurrent downloads (default: 3)",
+        default=None,
+        help="Maximum concurrent downloads",
     )
     p.add_argument(
         "--report-duplicates-only",
@@ -828,6 +921,51 @@ def parse_args() -> argparse.Namespace:
         help="Only report duplicates without downloading",
     )
     return p.parse_args()
+
+
+def _build_cli_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "output_dir": str(args.output_dir) if args.output_dir else None,
+        "browser": args.browser,
+        "profile": args.profile,
+        "concurrency": args.max_concurrent,
+        "max_retries": args.max_retries,
+        "timeout": args.timeout,
+        "log_level": args.log_level,
+        "bandwidth_limit_mbps": args.bandwidth_limit_mbps,
+    }
+
+
+def _load_effective_config(config_path: Path, cli_overrides: dict[str, Any]) -> dict[str, Any]:
+    base = get_default_config()
+    try:
+        file_config = load_config(config_path)
+    except ConfigError as exc:
+        print(f"[warning] 配置文件读取失败，使用默认配置: {exc}", file=sys.stderr)
+        file_config = {}
+
+    merged = merge_configs(base, file_config)
+    merged = merge_configs(merged, cli_overrides)
+    validate_config(merged)
+    return merged
+
+
+def _make_log_printer(log_level: str) -> Callable[[str], None]:
+    threshold = getattr(logging, log_level.upper(), logging.INFO)
+    message_levels = {
+        "[fatal]": logging.ERROR,
+        "[fallback]": logging.WARNING,
+    }
+
+    def _log(msg: str) -> None:
+        prefix = ""
+        if msg.startswith("[") and "]" in msg:
+            prefix = msg.split("]", 1)[0] + "]"
+        level = message_levels.get(prefix, logging.INFO)
+        if level >= threshold:
+            print(msg)
+
+    return _log
 
 
 def _load_urls_from_file(path: Path) -> list[str]:
@@ -852,6 +990,23 @@ def _load_urls_from_file(path: Path) -> list[str]:
 
 def main() -> int:
     args = parse_args()
+    config_path = Path(args.config).expanduser()
+    try:
+        effective_config = _load_effective_config(config_path, _build_cli_overrides(args))
+    except ValueError as exc:
+        print(f"[error] 配置无效: {exc}", file=sys.stderr)
+        return 1
+
+    browser = str(effective_config["browser"])
+    profile = str(effective_config["profile"])
+    out_dir = Path(str(effective_config["output_dir"])).expanduser().resolve()
+    timeout = int(effective_config["timeout"])
+    max_retries = int(effective_config["max_retries"])
+    concurrency = int(effective_config["concurrency"])
+    bandwidth_limit_mbps = float(effective_config.get("bandwidth_limit_mbps", 0))
+    log_level = str(effective_config.get("log_level", "INFO")).upper()
+    capture_seconds = max(10, int(args.capture_seconds))
+
     urls: list[str] = []
     is_batch_mode = args.url_file is not None
 
@@ -886,11 +1041,21 @@ def main() -> int:
             urls = dedup_result.unique_urls
             print(f"✓ 已跳过 {dedup_result.duplicate_count} 个重复 URL")
 
-    out_dir = args.output_dir.expanduser().resolve()
-
     # 批量下载模式
     if is_batch_mode:
-        return _run_batch_download(args, urls)
+        return _run_batch_download(
+            args=args,
+            urls=urls,
+            out_dir=out_dir,
+            browser=browser,
+            profile=profile,
+            capture_seconds=capture_seconds,
+            timeout=timeout,
+            max_retries=max_retries,
+            concurrency=concurrency,
+            bandwidth_limit_mbps=bandwidth_limit_mbps,
+            log_level=log_level,
+        )
 
     # 单 URL 模式
     url = urls[0]
@@ -898,11 +1063,14 @@ def main() -> int:
     result = run_site_download(
         page_url=url,
         output_dir=out_dir,
-        browser=args.browser,
-        profile=args.profile,
-        capture_seconds=max(10, int(args.capture_seconds)),
+        browser=browser,
+        profile=profile,
+        capture_seconds=capture_seconds,
+        timeout=timeout,
+        max_retries=max_retries,
+        bandwidth_limit_mbps=bandwidth_limit_mbps,
         use_runtime_capture=not args.no_runtime_capture,
-        log_func=print,
+        log_func=_make_log_printer(log_level),
     )
     print(f"[log] {result.log_file}")
     if result.ok and result.output_file:
@@ -913,24 +1081,42 @@ def main() -> int:
         return 1
 
 
-def _run_batch_download(args: argparse.Namespace, urls: list[str]) -> int:
+def _run_batch_download(
+    args: argparse.Namespace,
+    urls: list[str],
+    out_dir: Path,
+    browser: str,
+    profile: str,
+    capture_seconds: int,
+    timeout: int,
+    max_retries: int,
+    concurrency: int,
+    bandwidth_limit_mbps: float,
+    log_level: str,
+) -> int:
     """执行批量下载"""
     import asyncio
     from .batch_downloader import BatchDownloader, BatchDownloadConfig
 
     print(f"\n开始批量下载：{len(urls)} 个 URL")
-    print(f"输出目录：{args.output_dir}")
-    print(f"最大并发数：{args.max_concurrent}")
+    print(f"输出目录：{out_dir}")
+    print(f"最大并发数：{concurrency}")
     print()
 
     # 创建配置
     config = BatchDownloadConfig(
         url_file=args.url_file,
-        output_dir=args.output_dir.expanduser().resolve(),
+        output_dir=out_dir,
         check_duplicates=args.check_duplicates,
-        concurrency=args.max_concurrent,
-        browser=args.browser,
-        profile=args.profile,
+        concurrency=concurrency,
+        max_retries=max_retries,
+        browser=browser,
+        profile=profile,
+        capture_seconds=capture_seconds,
+        use_runtime_capture=not args.no_runtime_capture,
+        timeout=timeout,
+        bandwidth_limit_mbps=bandwidth_limit_mbps,
+        log_level=log_level,
     )
 
     # 创建下载器并执行

@@ -213,65 +213,257 @@ class DarkOrangeCard(tk.LabelFrame):
         return sep
 
 
-class DarkOrangeEntry(tk.Entry):
-    """暗黑橙色风格输入框"""
-    
-    def __init__(self, master, **kwargs):
-        super().__init__(
-            master,
-            bg=DarkOrangeColors.INPUT_BACKGROUND,
-            fg=DarkOrangeColors.TEXT_BODY,
-            insertbackground=DarkOrangeColors.PRIMARY,
+class _DarkOrangeRoundedBox(tk.Frame):
+    """圆角输入容器基类，用 Canvas 绘制圆角背景并嵌入真实输入控件。"""
+
+    def __init__(
+        self,
+        master,
+        *,
+        height: int | None = None,
+        radius: int = 12,
+        outer_bg: str = DarkOrangeColors.CARD_BACKGROUND,
+        fill_color: str = DarkOrangeColors.INPUT_BACKGROUND,
+        padding_x: int = 12,
+        padding_y: int = 8,
+    ):
+        super().__init__(master, bg=outer_bg)
+        self._radius = radius
+        self._fill_color = fill_color
+        self._padding_x = padding_x
+        self._padding_y = padding_y
+        self._focused = False
+
+        self._canvas = tk.Canvas(
+            self,
+            bg=outer_bg,
+            highlightthickness=0,
+            borderwidth=0,
             relief=tk.FLAT,
-            borderwidth=1,
-            highlightthickness=1,
-            highlightbackground=DarkOrangeColors.BORDER,
-            highlightcolor=DarkOrangeColors.BORDER_FOCUS,
-            font=("SF Pro Text", 15),
-            **kwargs
         )
-        
-        self.bind("<FocusIn>", self._on_focus_in)
-        self.bind("<FocusOut>", self._on_focus_out)
-    
-    def _on_focus_in(self, event):
-        self.configure(highlightthickness=2)
-    
-    def _on_focus_out(self, event):
-        self.configure(highlightthickness=1)
+        self._canvas.pack(fill=BOTH, expand=True)
+        self._window_id: int | None = None
+        self._inner_widget: tk.Widget | None = None
+        self._canvas.bind("<Configure>", self._on_canvas_configure)
+
+        if height is not None:
+            tk.Frame.configure(self, height=height)
+            self.pack_propagate(False)
+
+    def _rounded_rectangle(self, x1, y1, x2, y2, radius, **kwargs):
+        points = [
+            x1 + radius, y1,
+            x2 - radius, y1,
+            x2, y1,
+            x2, y1 + radius,
+            x2, y2 - radius,
+            x2, y2,
+            x2 - radius, y2,
+            x1 + radius, y2,
+            x1, y2,
+            x1, y2 - radius,
+            x1, y1 + radius,
+            x1, y1,
+        ]
+        return self._canvas.create_polygon(points, smooth=True, **kwargs)
+
+    def _attach_widget(self, widget: tk.Widget) -> None:
+        self._inner_widget = widget
+        self._window_id = self._canvas.create_window(
+            self._padding_x,
+            self._padding_y,
+            anchor="nw",
+            window=widget,
+        )
+        widget.bind("<FocusIn>", self._on_focus_in, add="+")
+        widget.bind("<FocusOut>", self._on_focus_out, add="+")
+
+    def _on_focus_in(self, _event) -> None:
+        self._focused = True
+        self._redraw()
+
+    def _on_focus_out(self, _event) -> None:
+        self._focused = False
+        self._redraw()
+
+    def _on_canvas_configure(self, _event) -> None:
+        self._redraw()
+
+    def _redraw(self) -> None:
+        width = max(2, self._canvas.winfo_width())
+        height = max(2, self._canvas.winfo_height())
+        self._canvas.delete("rounded_box")
+
+        border_color = DarkOrangeColors.BORDER_FOCUS if self._focused else DarkOrangeColors.BORDER
+        self._rounded_rectangle(
+            1, 1, width - 1, height - 1, self._radius,
+            fill=self._fill_color,
+            outline=border_color,
+            width=1,
+            tags="rounded_box",
+        )
+
+        if self._window_id is not None:
+            inner_width = max(1, width - self._padding_x * 2)
+            inner_height = max(1, height - self._padding_y * 2)
+            self._canvas.coords(self._window_id, self._padding_x, self._padding_y)
+            self._canvas.itemconfigure(self._window_id, width=inner_width, height=inner_height)
 
 
-class DarkOrangeText(tk.Text):
-    """暗黑橙色风格文本框"""
-    
+class DarkOrangeEntry(_DarkOrangeRoundedBox):
+    """暗黑橙色圆角输入框"""
+
     def __init__(self, master, **kwargs):
-        super().__init__(
-            master,
-            bg=DarkOrangeColors.INPUT_BACKGROUND,
-            fg=DarkOrangeColors.TEXT_BODY,
-            insertbackground=DarkOrangeColors.PRIMARY,
+        super().__init__(master, height=48, radius=12, padding_x=12, padding_y=10)
+        kwargs.setdefault("bg", DarkOrangeColors.INPUT_BACKGROUND)
+        kwargs.setdefault("fg", DarkOrangeColors.TEXT_BODY)
+        kwargs.setdefault("insertbackground", DarkOrangeColors.PRIMARY)
+        kwargs.setdefault("font", ("SF Pro Text", 15))
+        self.entry = tk.Entry(
+            self._canvas,
             relief=tk.FLAT,
-            borderwidth=1,
-            highlightthickness=1,
-            highlightbackground=DarkOrangeColors.BORDER,
-            highlightcolor=DarkOrangeColors.BORDER_FOCUS,
-            font=("SF Pro Text", 15),
-            padx=12,
-            pady=12,
+            borderwidth=0,
+            highlightthickness=0,
             **kwargs
         )
-    
+        self._attach_widget(self.entry)
+
+    def get(self, *args, **kwargs):
+        return self.entry.get(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return self.entry.delete(*args, **kwargs)
+
+    def insert(self, *args, **kwargs):
+        return self.entry.insert(*args, **kwargs)
+
+    def bind(self, sequence=None, func=None, add=None):
+        return self.entry.bind(sequence, func, add)
+
+    def config(self, *args, **kwargs):
+        return self.entry.config(*args, **kwargs)
+
+    configure = config
+
+
+class DarkOrangeCombobox(_DarkOrangeRoundedBox):
+    """暗黑橙色圆角下拉框"""
+
+    _style_name = "DarkOrange.TCombobox"
+    _style_ready = False
+
+    def __init__(self, master, **kwargs):
+        super().__init__(master, height=48, radius=12, padding_x=8, padding_y=8)
+        style = ttk.Style()
+        if not DarkOrangeCombobox._style_ready:
+            style.configure(
+                self._style_name,
+                foreground=DarkOrangeColors.TEXT_BODY,
+                fieldbackground=DarkOrangeColors.INPUT_BACKGROUND,
+                background=DarkOrangeColors.INPUT_BACKGROUND,
+                arrowcolor=DarkOrangeColors.TEXT_BODY,
+                borderwidth=0,
+                padding=4,
+                font=("SF Pro Text", 14),
+            )
+            style.map(
+                self._style_name,
+                fieldbackground=[("readonly", DarkOrangeColors.INPUT_BACKGROUND)],
+                foreground=[("readonly", DarkOrangeColors.TEXT_BODY)],
+                selectforeground=[("readonly", DarkOrangeColors.TEXT_BODY)],
+                selectbackground=[("readonly", DarkOrangeColors.INPUT_BACKGROUND)],
+            )
+            DarkOrangeCombobox._style_ready = True
+
+        self.combo = ttk.Combobox(
+            self._canvas,
+            style=self._style_name,
+            **kwargs,
+        )
+        self._attach_widget(self.combo)
+
+    def bind(self, sequence=None, func=None, add=None):
+        return self.combo.bind(sequence, func, add)
+
+    def config(self, *args, **kwargs):
+        return self.combo.config(*args, **kwargs)
+
+    configure = config
+
+
+class DarkOrangeText(_DarkOrangeRoundedBox):
+    """暗黑橙色圆角文本框"""
+
+    def __init__(self, master, **kwargs):
+        text_height = kwargs.pop("height", None)
+        fill_color = kwargs.get("bg", DarkOrangeColors.INPUT_BACKGROUND)
+        fixed_height = max(120, int(text_height) * 26 + 24) if text_height is not None else None
+
+        super().__init__(
+            master,
+            height=fixed_height,
+            radius=12,
+            padding_x=12,
+            padding_y=10,
+            fill_color=fill_color,
+        )
+
+        kwargs.setdefault("bg", DarkOrangeColors.INPUT_BACKGROUND)
+        kwargs.setdefault("fg", DarkOrangeColors.TEXT_BODY)
+        kwargs.setdefault("insertbackground", DarkOrangeColors.PRIMARY)
+        kwargs.setdefault("font", ("SF Pro Text", 15))
+
+        self.text = tk.Text(
+            self._canvas,
+            relief=tk.FLAT,
+            borderwidth=0,
+            highlightthickness=0,
+            padx=0,
+            pady=0,
+            **kwargs
+        )
+        self._attach_widget(self.text)
+        self._placeholder_active = False
+
     def set_placeholder(self, placeholder: str):
         """设置占位符文本"""
+        self.delete("1.0", END)
         self.insert("1.0", placeholder)
-        self.configure(fg=DarkOrangeColors.TEXT_PLACEHOLDER)
-    
+        self.text.configure(fg=DarkOrangeColors.TEXT_PLACEHOLDER)
+        self._placeholder_active = True
+
     def delete_placeholder(self):
         """删除占位符并恢复文字颜色"""
+        if not self._placeholder_active:
+            return
         content = self.get("1.0", END).strip()
-        if content and self.cget("fg") == DarkOrangeColors.TEXT_PLACEHOLDER:
+        if content:
             self.delete("1.0", END)
-            self.configure(fg=DarkOrangeColors.TEXT_BODY)
+            self.text.configure(fg=DarkOrangeColors.TEXT_BODY)
+            self._placeholder_active = False
+
+    def get(self, *args, **kwargs):
+        return self.text.get(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        return self.text.delete(*args, **kwargs)
+
+    def insert(self, *args, **kwargs):
+        return self.text.insert(*args, **kwargs)
+
+    def see(self, *args, **kwargs):
+        return self.text.see(*args, **kwargs)
+
+    def tag_configure(self, *args, **kwargs):
+        return self.text.tag_configure(*args, **kwargs)
+
+    def bind(self, sequence=None, func=None, add=None):
+        return self.text.bind(sequence, func, add)
+
+    def config(self, *args, **kwargs):
+        return self.text.config(*args, **kwargs)
+
+    configure = config
 
 
 class DarkOrangeProgressbar(tk.Canvas):
@@ -370,6 +562,16 @@ class DarkOrangeNotebook(ttk.Notebook):
         )
 
 
+class CompatButton(ttk.Button):
+    """兼容模式按钮，补齐 set_enabled 接口。"""
+
+    def set_enabled(self, enabled: bool) -> None:
+        if enabled:
+            self.state(["!disabled"])
+        else:
+            self.state(["disabled"])
+
+
 # ============================================================================
 # Main Application
 # ============================================================================
@@ -389,7 +591,12 @@ class App:
         self.root = root
         self.root.title("PSiteDL - 视频下载工具")
         self.root.geometry("1200x850")
-        self.root.configure(bg=DarkOrangeColors.BACKGROUND)
+        self.root.minsize(1000, 700)
+        self.compat_mode = self._should_use_compat_ui()
+        if self.compat_mode:
+            self.root.configure(bg="#f0f0f0")
+        else:
+            self.root.configure(bg=DarkOrangeColors.BACKGROUND)
         
         # 加载并设置窗口图标
         self._load_icon()
@@ -419,6 +626,19 @@ class App:
         
         self._build_ui()
         self._poll_logs()
+
+    def _should_use_compat_ui(self) -> bool:
+        """在 macOS 自带 Tk 8.5 上启用兼容界面，避免自定义绘制丢失。"""
+        if sys.platform != "darwin":
+            return False
+        try:
+            patchlevel = self.root.tk.call("info", "patchlevel")
+            parts = str(patchlevel).split(".")
+            major = int(parts[0]) if len(parts) > 0 else 0
+            minor = int(parts[1]) if len(parts) > 1 else 0
+            return (major, minor) < (8, 6)
+        except Exception:
+            return False
     
     def _load_icon(self) -> None:
         """加载应用程序图标
@@ -433,41 +653,57 @@ class App:
             script_dir = Path(__file__).parent
             project_root = script_dir.parent.parent
             assets_dir = project_root / "assets"
-            
+            loaded = False
+
             # 根据不同平台选择图标格式
             if os.name == "nt":  # Windows
                 icon_path = assets_dir / "psitedl_icon.ico"
                 if icon_path.exists():
                     self.root.iconbitmap(str(icon_path))
+                    loaded = True
             elif os.name == "posix":
-                # macOS 和 Linux 使用 PNG
-                icon_path = assets_dir / "psitedl_icon.png"
-                if icon_path.exists():
-                    # 尝试设置 PNG 图标
+                # macOS/Linux: 优先使用 Tk 一定支持的 GIF，避免系统 Tk 对 PNG 的兼容问题
+                for icon_path in (
+                    assets_dir / "icon-64.gif",
+                    assets_dir / "psitedl_icon.png",
+                    assets_dir / "icon-64.png",
+                ):
+                    if not icon_path.exists():
+                        continue
                     try:
                         icon_img = tk.PhotoImage(file=str(icon_path))
                         self.root.iconphoto(True, icon_img)
                         # 保持引用防止被垃圾回收
                         self._icon_image = icon_img
+                        loaded = True
+                        break
                     except Exception:
-                        pass
-                
-                # macOS 额外尝试.icns
+                        continue
+
+                # macOS 额外尝试 .icns（某些 Tk 版本不支持，故仅保留占位）
                 if sys.platform == "darwin":
                     icns_path = assets_dir / "icon.icns"
                     if icns_path.exists():
-                        # macOS 可以通过设置 dock 图标
+                        # macOS 可以通过 pyobjc 设置 dock 图标（这里不强依赖该能力）
                         pass
-            
-            print(f"[✓] 图标加载成功")
+
+            if loaded:
+                print("[✓] 图标加载成功")
+            else:
+                print("[!] 图标加载失败：未找到可用图标格式")
         except Exception as e:
             print(f"[!] 图标加载失败：{e}")
     
     def _build_ui(self) -> None:
         """构建用户界面 - 左右分栏布局"""
+        if self.compat_mode:
+            self._build_compat_ui()
+            return
         
         # 主容器
         main_frame = tk.Frame(self.root, bg=DarkOrangeColors.BACKGROUND)
+        # 在 macOS 的系统 Tk 下，place + 负尺寸偏移会导致容器被错误计算为 1x1。
+        # 使用 pack + 外边距可确保主布局稳定铺满窗口。
         main_frame.pack(fill=BOTH, expand=True, padx=24, pady=24)
         
         # 1. 标题区
@@ -501,12 +737,149 @@ class App:
         
         # 设置初始分栏比例 (60:40)
         # 设置初始分隔位置 (720px)
-        # paned.sash_pos 在某些系统上不可用，使用 pack_propagate 替代
+        # 某些 Tk 版本在初次布局阶段调用 sash_pos 会抛 TclError
         try:
             paned.sash_pos(0, 720)
-        except AttributeError:
-            # 如果 sash_pos 不可用，使用默认位置
+        except Exception:
             pass
+
+    def _build_compat_ui(self) -> None:
+        """为 macOS 系统 Tk 8.5 构建稳定显示的原生界面。"""
+        main = ttk.Frame(self.root, padding=16)
+        main.pack(fill=BOTH, expand=True)
+        main.columnconfigure(0, weight=3)
+        main.columnconfigure(1, weight=2)
+        main.rowconfigure(1, weight=1)
+
+        header = ttk.Frame(main)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        ttk.Label(
+            header,
+            text="PSiteDL 视频下载工具",
+            font=("Helvetica", 20, "bold"),
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            header,
+            text="兼容模式",
+            foreground="#666666",
+        ).pack(side=tk.LEFT, padx=(12, 0), pady=(6, 0))
+
+        left = ttk.Frame(main)
+        left.grid(row=1, column=0, sticky="nsew", padx=(0, 12))
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(3, weight=1)
+
+        right = ttk.Frame(main)
+        right.grid(row=1, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=1)
+
+        url_frame = ttk.LabelFrame(left, text="待下载 URL")
+        url_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        url_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            url_frame,
+            text="每行一个播放页 URL",
+            foreground="#666666",
+        ).grid(row=0, column=0, sticky="w", padx=10, pady=(8, 0))
+        self.url_text = tk.Text(url_frame, height=6, wrap=tk.WORD)
+        self.url_text.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
+
+        settings = ttk.LabelFrame(left, text="设置")
+        settings.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        settings.columnconfigure(1, weight=1)
+        settings.columnconfigure(3, weight=1)
+
+        ttk.Label(settings, text="浏览器").grid(row=0, column=0, sticky="w", padx=10, pady=(10, 6))
+        browser_combo = ttk.Combobox(
+            settings,
+            textvariable=self.browser,
+            values=["chrome", "chromium", "edge", "brave"],
+            state="readonly",
+        )
+        browser_combo.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=(10, 6))
+
+        ttk.Label(settings, text="配置文件").grid(row=0, column=2, sticky="w", padx=(0, 10), pady=(10, 6))
+        ttk.Entry(settings, textvariable=self.profile).grid(
+            row=0, column=3, sticky="ew", padx=(0, 10), pady=(10, 6)
+        )
+
+        ttk.Label(settings, text="输出目录").grid(row=1, column=0, sticky="w", padx=10, pady=6)
+        ttk.Entry(settings, textvariable=self.output_dir).grid(
+            row=1, column=1, columnspan=2, sticky="ew", padx=(0, 10), pady=6
+        )
+        ttk.Button(settings, text="浏览", command=self._pick_output_dir).grid(
+            row=1, column=3, sticky="ew", padx=(0, 10), pady=6
+        )
+
+        ttk.Label(settings, text="运行时探测秒数").grid(row=2, column=0, sticky="w", padx=10, pady=(6, 10))
+        ttk.Entry(settings, textvariable=self.capture_seconds).grid(
+            row=2, column=1, sticky="ew", padx=(0, 10), pady=(6, 10)
+        )
+        ttk.Checkbutton(
+            settings,
+            text="启用运行时探测（会打开浏览器并抓播放请求）",
+            variable=self.use_runtime_capture,
+        ).grid(row=2, column=2, columnspan=2, sticky="w", padx=(0, 10), pady=(6, 10))
+
+        controls = ttk.Frame(left)
+        controls.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        controls.columnconfigure(4, weight=1)
+
+        self.add_btn = CompatButton(controls, text="加入待下载", command=self._add_tasks)
+        self.add_btn.grid(row=0, column=0, padx=(0, 8))
+        self.start_btn = CompatButton(controls, text="启动下载", command=self._start_queue)
+        self.start_btn.grid(row=0, column=1, padx=(0, 8))
+        self.clear_pending_btn = CompatButton(controls, text="清空待下载", command=self._clear_pending)
+        self.clear_pending_btn.grid(row=0, column=2, padx=(0, 8))
+        CompatButton(controls, text="清空日志", command=self._clear_log).grid(row=0, column=3, padx=(0, 12))
+        ttk.Label(controls, textvariable=self.status_text).grid(row=0, column=4, sticky="e")
+
+        tasks = ttk.LabelFrame(left, text="任务管理")
+        tasks.grid(row=3, column=0, sticky="nsew")
+        tasks.columnconfigure(0, weight=1)
+        tasks.rowconfigure(0, weight=1)
+
+        task_tabs = ttk.Notebook(tasks)
+        task_tabs.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+        pending_tab = ttk.Frame(task_tabs)
+        task_tabs.add(pending_tab, text="待下载")
+        pending_tab.columnconfigure(0, weight=1)
+        pending_tab.rowconfigure(0, weight=1)
+        self.pending_list = tk.Listbox(pending_tab)
+        self.pending_list.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+
+        active_tab = ttk.Frame(task_tabs)
+        task_tabs.add(active_tab, text="下载中")
+        active_tab.columnconfigure(0, weight=1)
+        active_tab.rowconfigure(0, weight=1)
+        self.active_tree = ttk.Treeview(
+            active_tab,
+            columns=("url", "progress", "status"),
+            show="headings",
+        )
+        self.active_tree.heading("url", text="URL")
+        self.active_tree.heading("progress", text="进度")
+        self.active_tree.heading("status", text="状态")
+        self.active_tree.column("url", width=360, anchor=W)
+        self.active_tree.column("progress", width=90, anchor=W)
+        self.active_tree.column("status", width=90, anchor=W)
+        self.active_tree.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+
+        completed_tab = ttk.Frame(task_tabs)
+        task_tabs.add(completed_tab, text="已完成")
+        completed_tab.columnconfigure(0, weight=1)
+        completed_tab.rowconfigure(0, weight=1)
+        self.completed_list = tk.Listbox(completed_tab)
+        self.completed_list.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+
+        log_frame = ttk.LabelFrame(right, text="运行日志")
+        log_frame.grid(row=0, column=0, sticky="nsew")
+        log_frame.columnconfigure(0, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        self.log_text = tk.Text(log_frame, wrap=tk.WORD)
+        self.log_text.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
     
     def _build_header(self, parent):
         """构建标题区"""
@@ -517,15 +890,21 @@ class App:
         try:
             script_dir = Path(__file__).parent
             project_root = script_dir.parent.parent
-            icon_path = project_root / "assets" / "icon-64.png"
-            if icon_path.exists():
-                self.header_icon = tk.PhotoImage(file=str(icon_path))
-                icon_label = tk.Label(
-                    header_frame,
-                    image=self.header_icon,
-                    bg=DarkOrangeColors.BACKGROUND
-                )
-                icon_label.pack(side=tk.LEFT, padx=(0, 12), pady=(0, 0))
+            assets_dir = project_root / "assets"
+            for icon_path in (assets_dir / "icon-64.gif", assets_dir / "icon-64.png"):
+                if not icon_path.exists():
+                    continue
+                try:
+                    self.header_icon = tk.PhotoImage(file=str(icon_path))
+                    icon_label = tk.Label(
+                        header_frame,
+                        image=self.header_icon,
+                        bg=DarkOrangeColors.BACKGROUND
+                    )
+                    icon_label.pack(side=tk.LEFT, padx=(0, 12), pady=(0, 0))
+                    break
+                except Exception:
+                    continue
         except Exception as e:
             print(f"[!] 标题栏图标加载失败：{e}")
         
@@ -572,8 +951,18 @@ class App:
     
     def _build_url_card(self, parent):
         """构建 URL 输入卡片"""
-        card = DarkOrangeCard(parent, text="视频 URL", padding=20)
+        card = DarkOrangeCard(parent, text="", padding=20)
         card.pack(fill=tk.X, pady=(0, 16))
+
+        title_label = tk.Label(
+            card,
+            text="待下载 URL",
+            font=("SF Pro Text", 13, "bold"),
+            fg=DarkOrangeColors.TEXT_HIGHLIGHT,
+            bg=DarkOrangeColors.CARD_BACKGROUND,
+            anchor="w"
+        )
+        title_label.pack(fill=tk.X)
         
         # URL 输入框
         self.url_text = DarkOrangeText(card, height=4)
@@ -595,6 +984,9 @@ class App:
         # 第一行：浏览器、Profile、输出目录
         row1 = tk.Frame(settings_frame, bg=DarkOrangeColors.CARD_BACKGROUND)
         row1.pack(fill=tk.X, pady=(0, 16))
+        row1.grid_columnconfigure(0, weight=1, uniform="settings_row")
+        row1.grid_columnconfigure(1, weight=1, uniform="settings_row")
+        row1.grid_columnconfigure(2, weight=1, uniform="settings_row")
         
         # 浏览器选择
         browser_frame = self._create_setting_field(
@@ -603,17 +995,17 @@ class App:
             ["chrome", "chromium", "edge", "brave"],
             self.browser
         )
-        browser_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=(0, 16))
+        browser_frame.grid(row=0, column=0, sticky="ew", padx=(0, 16))
         
-        # Profile
+        # 配置文件
         profile_frame = self._create_setting_field(
             row1,
-            "Profile",
+            "配置文件",
             None,
             self.profile,
             is_entry=True
         )
-        profile_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=(0, 16))
+        profile_frame.grid(row=0, column=1, sticky="ew", padx=(0, 16))
         
         # 输出目录
         output_frame = self._create_setting_field(
@@ -626,11 +1018,13 @@ class App:
             button_text="浏览",
             button_command=self._pick_output_dir
         )
-        output_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        output_frame.grid(row=0, column=2, sticky="ew")
         
         # 第二行：运行时探测
         row2 = tk.Frame(settings_frame, bg=DarkOrangeColors.CARD_BACKGROUND)
         row2.pack(fill=tk.X)
+        row2.grid_columnconfigure(0, weight=1)
+        row2.grid_columnconfigure(1, weight=1)
         
         seconds_frame = self._create_setting_field(
             row2,
@@ -639,7 +1033,7 @@ class App:
             self.capture_seconds,
             is_entry=True
         )
-        seconds_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=(0, 16))
+        seconds_frame.grid(row=0, column=0, sticky="ew", padx=(0, 16))
         
         # 运行时探测开关 - 橙色主题
         capture_check = tk.Checkbutton(
@@ -653,7 +1047,7 @@ class App:
             activebackground=DarkOrangeColors.CARD_BACKGROUND,
             activeforeground=DarkOrangeColors.TEXT_BODY
         )
-        capture_check.pack(side=tk.LEFT, padx=(16, 0))
+        capture_check.grid(row=0, column=1, sticky="w", padx=(16, 0), pady=(34, 0))
     
     def _create_setting_field(
         self,
@@ -682,21 +1076,13 @@ class App:
         
         # 输入控件
         if values:
-            # 下拉选择 - 自定义样式
-            combo = ttk.Combobox(
+            combo = DarkOrangeCombobox(
                 frame,
                 textvariable=variable,
                 values=values,
                 state="readonly",
-                font=("SF Pro Text", 14),
-                height=8
             )
             combo.pack(fill=tk.X)
-            # 配置下拉框样式
-            combo.configure(
-                background=DarkOrangeColors.INPUT_BACKGROUND,
-                foreground=DarkOrangeColors.TEXT_BODY,
-            )
         elif has_button:
             # 输入框 + 按钮
             entry_frame = tk.Frame(frame, bg=DarkOrangeColors.CARD_BACKGROUND)
@@ -710,7 +1096,7 @@ class App:
                 text=button_text,
                 command=button_command,
                 width=80,
-                height=38,
+                height=44,
                 style="secondary"
             )
             button.pack(side=tk.RIGHT)
@@ -869,15 +1255,11 @@ class App:
         card.pack(fill=BOTH, expand=True)
         
         # 日志文本框 - 橙色文字 @ 深色背景
-        self.log_text = tk.Text(
+        self.log_text = DarkOrangeText(
             card,
             font=("SF Mono", 12),
             fg="#ff9500",  # 橙色文字
             bg="#1e1e1e",  # 深色背景
-            highlightthickness=0,
-            borderwidth=0,
-            padx=12,
-            pady=12,
             state=tk.DISABLED
         )
         self.log_text.pack(fill=BOTH, expand=True)

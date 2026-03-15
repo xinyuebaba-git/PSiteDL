@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 # 复用现有模块
-from .downloader import ConcurrentDownloader, DownloadResult
+from .downloader import DownloadResult
 from .logger import create_logger
 from .url_dedup import URLDeduplicator
 
@@ -77,6 +77,11 @@ class BatchDownloadConfig:
     max_retries: int = 3
     browser: str = "chrome"
     profile: str = "Default"
+    capture_seconds: int = 30
+    use_runtime_capture: bool = True
+    timeout: int = 30
+    bandwidth_limit_mbps: float = 0.0
+    log_level: str = "INFO"
     dedup_history_file: Path | None = None
 
 
@@ -217,7 +222,7 @@ class BatchDownloader:
             config: 批量下载配置
         """
         self.config = config
-        self.logger = create_logger(__name__)
+        self.logger = create_logger(__name__, level=config.log_level)
         self.console = Console() if RICH_AVAILABLE else None
 
         # 初始化去重器
@@ -225,11 +230,6 @@ class BatchDownloader:
             URLDeduplicator(history_file=config.dedup_history_file)
             if config.check_duplicates
             else None
-        )
-
-        # 初始化下载器
-        self.downloader = ConcurrentDownloader(
-            max_concurrent=config.concurrency,
         )
 
     async def run(self) -> BatchDownloadResult:
@@ -319,6 +319,78 @@ class BatchDownloader:
 
         return result
 
+    async def _download_one(
+        self,
+        *,
+        idx: int,
+        total: int,
+        url: str,
+        semaphore: asyncio.Semaphore,
+    ) -> tuple[int, DownloadResult]:
+        """下载单个 URL（带任务级重试）"""
+        from .site_cli import run_site_download
+
+        async with semaphore:
+            self.logger.info(f"[{idx + 1}/{total}] 开始下载：{url}")
+            started = time.monotonic()
+            last_error = "Download failed"
+
+            for attempt in range(self.config.max_retries + 1):
+                try:
+                    result_obj = await asyncio.to_thread(
+                        run_site_download,
+                        page_url=url,
+                        output_dir=self.config.output_dir,
+                        browser=self.config.browser,
+                        profile=self.config.profile,
+                        capture_seconds=max(10, int(self.config.capture_seconds)),
+                        timeout=max(1, int(self.config.timeout)),
+                        max_retries=0,
+                        bandwidth_limit_mbps=max(0.0, float(self.config.bandwidth_limit_mbps)),
+                        use_runtime_capture=self.config.use_runtime_capture,
+                        log_func=lambda msg: None,
+                    )
+
+                    duration = time.monotonic() - started
+                    if result_obj.ok:
+                        file_size = 0
+                        if result_obj.output_file and result_obj.output_file.exists():
+                            file_size = result_obj.output_file.stat().st_size
+                        result = DownloadResult(
+                            url=url,
+                            success=True,
+                            output_file=result_obj.output_file,
+                            error=None,
+                            file_size=file_size,
+                            duration=duration,
+                            retries=attempt,
+                        )
+                        self.logger.info(
+                            f"[{idx + 1}/{total}] 下载完成："
+                            f"{result.output_file.name if result.output_file else 'unknown'}"
+                        )
+                        return idx, result
+
+                    last_error = f"Download failed (log: {result_obj.log_file})"
+                except Exception as exc:
+                    last_error = str(exc)
+
+                if attempt < self.config.max_retries:
+                    self.logger.warning(
+                        f"[{idx + 1}/{total}] 下载失败，准备重试 "
+                        f"({attempt + 1}/{self.config.max_retries})：{last_error}"
+                    )
+
+            duration = time.monotonic() - started
+            self.logger.error(f"[{idx + 1}/{total}] 下载失败：{last_error}")
+            return idx, DownloadResult(
+                url=url,
+                success=False,
+                error=last_error,
+                duration=duration,
+                retries=self.config.max_retries,
+            )
+
     async def _download_all(
         self,
         urls: list[str],
@@ -332,9 +404,20 @@ class BatchDownloader:
         Returns:
             下载结果列表
         """
-        results: list[DownloadResult] = []
+        semaphore = asyncio.Semaphore(max(1, int(self.config.concurrency)))
+        tasks = [
+            asyncio.create_task(
+                self._download_one(
+                    idx=idx,
+                    total=len(urls),
+                    url=url,
+                    semaphore=semaphore,
+                )
+            )
+            for idx, url in enumerate(urls)
+        ]
+        ordered_results: list[DownloadResult | None] = [None] * len(urls)
 
-        # 创建进度显示
         if RICH_AVAILABLE and self.console:
             with Progress(
                 TextColumn("[bold blue]{task.description}"),
@@ -345,91 +428,16 @@ class BatchDownloader:
                 console=self.console,
             ) as progress:
                 task = progress.add_task("下载中...", total=len(urls))
-
-                for idx, url in enumerate(urls, start=1):
-                    self.logger.info(f"[{idx}/{len(urls)}] 开始下载：{url}")
-
-                    try:
-                        # 调用现有下载器
-                        result = await self.downloader.download(
-                            url=url,
-                            output_dir=self.config.output_dir,
-                        )
-                        results.append(result)
-
-                        if result.success:
-                            self.logger.info(
-                                f"[{idx}/{len(urls)}] 下载完成："
-                                f"{result.output_file.name if result.output_file else 'unknown'} "
-                                f"({result.file_size / 1024 / 1024:.1f} MB)"
-                            )
-                        else:
-                            self.logger.error(f"[{idx}/{len(urls)}] 下载失败：{result.error}")
-                    except Exception as e:
-                        self.logger.exception(f"[{idx}/{len(urls)}] 下载异常：{e}")
-                        results.append(
-                            DownloadResult(
-                                url=url,
-                                success=False,
-                                error=str(e),
-                            )
-                        )
-
+                for done in asyncio.as_completed(tasks):
+                    idx, result = await done
+                    ordered_results[idx] = result
                     progress.update(task, advance=1)
         else:
-            # 简单文本进度
-            for idx, url in enumerate(urls, start=1):
-                self.logger.info(f"[{idx}/{len(urls)}] 开始下载：{url}")
+            for done in asyncio.as_completed(tasks):
+                idx, result = await done
+                ordered_results[idx] = result
 
-                try:
-                    # 使用 site_cli 的下载函数
-                    from .site_cli import run_site_download
-
-                    result_obj = await asyncio.to_thread(
-                        run_site_download,
-                        page_url=url,
-                        output_dir=self.config.output_dir,
-                        browser=self.config.browser,
-                        profile=self.config.profile,
-                        capture_seconds=30,
-                        use_runtime_capture=True,
-                        log_func=lambda msg: None,  # 静默日志
-                    )
-
-                    # 转换为 DownloadResult
-                    result = DownloadResult(
-                        url=url,
-                        success=result_obj.ok,
-                        output_file=result_obj.output_file,
-                        error=None if result_obj.ok else "Download failed",
-                        file_size=(
-                            result_obj.output_file.stat().st_size
-                            if result_obj.output_file and result_obj.output_file.exists()
-                            else 0
-                        ),
-                        duration=0.0,
-                        retries=0,
-                    )
-                    results.append(result)
-
-                    if result.success:
-                        self.logger.info(
-                            f"[{idx}/{len(urls)}] 下载完成："
-                            f"{result.output_file.name if result.output_file else 'unknown'}"
-                        )
-                    else:
-                        self.logger.error(f"[{idx}/{len(urls)}] 下载失败：{result.error}")
-                except Exception as e:
-                    self.logger.exception(f"[{idx}/{len(urls)}] 下载异常：{e}")
-                    results.append(
-                        DownloadResult(
-                            url=url,
-                            success=False,
-                            error=str(e),
-                        )
-                    )
-
-        return results
+        return [r for r in ordered_results if r is not None]
 
     def _print_summary(self, result: BatchDownloadResult) -> None:
         """打印下载摘要"""
@@ -512,7 +520,7 @@ URL 列表文件格式:
         "--browser",
         type=str,
         default="chrome",
-        choices=["chrome", "chromium", "edge", "brave", "firefox"],
+        choices=["chrome", "chromium", "edge", "brave", "firefox", "safari"],
         help="浏览器类型（默认：chrome）",
     )
 
@@ -521,6 +529,41 @@ URL 列表文件格式:
         type=str,
         default="Default",
         help="浏览器配置文件名称（默认：Default）",
+    )
+
+    parser.add_argument(
+        "--capture-seconds",
+        type=int,
+        default=30,
+        help="运行时探测时长（默认：30 秒）",
+    )
+
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="网络超时（默认：30 秒）",
+    )
+
+    parser.add_argument(
+        "--bandwidth-limit",
+        type=float,
+        default=0,
+        help="下载限速 Mbps（默认：0，无限制）",
+    )
+
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="日志级别（默认：INFO）",
+    )
+
+    parser.add_argument(
+        "--no-runtime-capture",
+        action="store_true",
+        help="禁用 Playwright 运行时探测",
     )
 
     parser.add_argument(
@@ -546,6 +589,11 @@ def main() -> int:
         max_retries=args.max_retries,
         browser=args.browser,
         profile=args.profile,
+        capture_seconds=max(10, int(args.capture_seconds)),
+        use_runtime_capture=not args.no_runtime_capture,
+        timeout=max(1, int(args.timeout)),
+        bandwidth_limit_mbps=max(0.0, float(args.bandwidth_limit)),
+        log_level=args.log_level,
     )
 
     # 创建下载器并运行

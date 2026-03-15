@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -14,7 +12,6 @@ from webvidgrab.batch_downloader import (
     BatchDownloader,
     URLLoader,
 )
-from webvidgrab.downloader import DownloadResult
 
 
 class TestBatchDownloadConfig:
@@ -178,6 +175,122 @@ class TestBatchDownloader:
 
         assert result.total == 0
         assert result.succeeded == 0
+
+    @pytest.mark.asyncio
+    async def test_download_retries_until_success(self, tmp_path: Path, monkeypatch) -> None:
+        """任务级重试：首次失败后重试成功"""
+        from webvidgrab.site_cli import ProbeResult
+
+        urls = [
+            "https://example.com/video-a",
+            "https://example.com/video-b",
+        ]
+        url_file = tmp_path / "urls.txt"
+        url_file.write_text("\n".join(urls), encoding="utf-8")
+        calls: dict[str, int] = {}
+
+        def fake_run_site_download(
+            *,
+            page_url: str,
+            output_dir: Path,
+            browser: str = "chrome",
+            profile: str = "Default",
+            capture_seconds: int = 30,
+            timeout: int = 30,
+            max_retries: int = 0,
+            bandwidth_limit_mbps: float = 0.0,
+            use_runtime_capture: bool = True,
+            log_func=None,
+            progress_callback=None,
+        ) -> ProbeResult:
+            calls[page_url] = calls.get(page_url, 0) + 1
+            if calls[page_url] == 1:
+                return ProbeResult(
+                    page_url=page_url,
+                    final_candidate=None,
+                    candidate_count=0,
+                    output_file=None,
+                    log_file=tmp_path / f"{Path(page_url).name}.log",
+                    ok=False,
+                )
+
+            output_file = output_dir / f"{Path(page_url).name}.mp4"
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_bytes(b"ok")
+            return ProbeResult(
+                page_url=page_url,
+                final_candidate=page_url,
+                candidate_count=1,
+                output_file=output_file,
+                log_file=tmp_path / f"{Path(page_url).name}.log",
+                ok=True,
+            )
+
+        monkeypatch.setattr("webvidgrab.site_cli.run_site_download", fake_run_site_download)
+
+        config = BatchDownloadConfig(
+            url_file=url_file,
+            output_dir=tmp_path / "output",
+            concurrency=2,
+            max_retries=1,
+            use_runtime_capture=False,
+        )
+        downloader = BatchDownloader(config)
+        result = await downloader.run()
+
+        assert result.succeeded == 2
+        assert result.failed == 0
+        assert all(calls[url] == 2 for url in urls)
+
+    @pytest.mark.asyncio
+    async def test_download_retries_exhausted(self, tmp_path: Path, monkeypatch) -> None:
+        """任务级重试：超过最大重试后标记失败"""
+        from webvidgrab.site_cli import ProbeResult
+
+        url_file = tmp_path / "urls.txt"
+        url_file.write_text("https://example.com/video-a\n", encoding="utf-8")
+        calls = {"count": 0}
+
+        def fake_run_site_download(
+            *,
+            page_url: str,
+            output_dir: Path,
+            browser: str = "chrome",
+            profile: str = "Default",
+            capture_seconds: int = 30,
+            timeout: int = 30,
+            max_retries: int = 0,
+            bandwidth_limit_mbps: float = 0.0,
+            use_runtime_capture: bool = True,
+            log_func=None,
+            progress_callback=None,
+        ) -> ProbeResult:
+            calls["count"] += 1
+            return ProbeResult(
+                page_url=page_url,
+                final_candidate=None,
+                candidate_count=0,
+                output_file=None,
+                log_file=tmp_path / "failed.log",
+                ok=False,
+            )
+
+        monkeypatch.setattr("webvidgrab.site_cli.run_site_download", fake_run_site_download)
+
+        config = BatchDownloadConfig(
+            url_file=url_file,
+            output_dir=tmp_path / "output",
+            concurrency=1,
+            max_retries=2,
+            use_runtime_capture=False,
+        )
+        downloader = BatchDownloader(config)
+        result = await downloader.run()
+
+        assert result.succeeded == 0
+        assert result.failed == 1
+        assert calls["count"] == 3
+        assert result.results[0].retries == 2
 
 
 class TestBatchDownloadResult:

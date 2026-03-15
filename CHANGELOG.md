@@ -25,13 +25,31 @@
   - 添加 `--url-file` 参数详细说明
   - 新增批量下载示例 (并发/带宽限制)
   - 更新快速开始章节
+- **GUI 图标兼容资源**: 新增 `assets/icon-64.gif`，提升 Tk 环境图标加载成功率
+- **修改说明文档**: 新增 `docs/MODIFICATION_NOTE_2026-03-16.md`
 
 ### Changed
 - 优化文档结构，批量下载相关文档独立成篇
+- **CLI 与下载链路增强**
+  - `site_cli.py` 新增并完善配置/并发/重试/超时/限速/日志级别等参数
+  - `batch_downloader.py` 修复批量下载调用路径并实现真实并发与任务级重试
+  - `downloader.py` 增加 `download()` 入口，补充重试与带宽参数透传
+  - `config.py` 完善默认值与校验（浏览器枚举、timeout、max_retries、bandwidth_limit）
+- **GUI 启动链路加固**
+  - `run_psitedl_gui.sh` 与桌面启动脚本优先使用 `.venv`，回退到 Homebrew Python，再回退系统 Python
+  - 统一设置 `TK_SILENCE_DEPRECATION=1`
+- **GUI 交互与布局优化**
+  - URL 区补充明确标题“待下载 URL”
+  - 设置区首行改为三列等宽网格，修复浏览器/配置文件/输出目录水平对齐
+  - `Profile` 文案改为“配置文件”
+  - 输入框、文本框、下拉框统一圆角风格（含 URL 与日志区）
 
-### Planned
-- 集成测试完善
-- v0.4.0 发布准备
+### Removed
+- 删除已跟踪的运行产物与构建产物：
+  - `.coverage`
+  - `gui_startup.log`
+  - `logs/sitegrab/*.log`
+  - `src/PSiteDL.egg-info/*`
 
 ## [0.4.0] - 2026-03-15
 

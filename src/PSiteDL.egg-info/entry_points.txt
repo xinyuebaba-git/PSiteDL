@@ -1,3 +1,0 @@
-[console_scripts]
-psitedl = webvidgrab.site_cli:main
-psitedl-gui = webvidgrab.site_gui:main

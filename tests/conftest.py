@@ -29,6 +29,7 @@ def sample_config(temp_dir: Path) -> dict[str, Any]:
         "timeout": 30,
         "log_level": "INFO",
         "log_file": str(temp_dir / "psitedl.log"),
+        "bandwidth_limit_mbps": 0,
     }
 
 
