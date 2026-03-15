@@ -804,6 +804,29 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--profile", default="Default")
     p.add_argument("--capture-seconds", type=int, default=30)
     p.add_argument("--no-runtime-capture", action="store_true")
+    p.add_argument(
+        "--check-duplicates",
+        action="store_true",
+        default=True,
+        help="Check for duplicate URLs before downloading (default: enabled)",
+    )
+    p.add_argument(
+        "--no-check-duplicates",
+        action="store_false",
+        dest="check_duplicates",
+        help="Disable duplicate URL checking",
+    )
+    p.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=3,
+        help="Maximum concurrent downloads (default: 3)",
+    )
+    p.add_argument(
+        "--report-duplicates-only",
+        action="store_true",
+        help="Only report duplicates without downloading",
+    )
     return p.parse_args()
 
 
@@ -830,39 +853,105 @@ def _load_urls_from_file(path: Path) -> list[str]:
 def main() -> int:
     args = parse_args()
     urls: list[str] = []
+    is_batch_mode = args.url_file is not None
+
     if args.url:
         urls.append(args.url)
     if args.url_file:
         urls.extend(_load_urls_from_file(args.url_file))
-    urls = list(dict.fromkeys(urls))
+
     if not urls:
         print("[error] 请提供 URL 或 --url-file。")
         return 1
 
-    out_dir = args.output_dir.expanduser().resolve()
-    success = 0
-    failed = 0
-    for idx, url in enumerate(urls, start=1):
-        print(f"[task] {idx}/{len(urls)} {url}")
-        result = run_site_download(
-            page_url=url,
-            output_dir=out_dir,
-            browser=args.browser,
-            profile=args.profile,
-            capture_seconds=max(10, int(args.capture_seconds)),
-            use_runtime_capture=not args.no_runtime_capture,
-            log_func=print,
-        )
-        print(f"[log] {result.log_file}")
-        if result.ok and result.output_file:
-            print(f"[saved] {result.output_file}")
-            success += 1
-        else:
-            print("[error] 未下载到视频。请查看日志。")
-            failed += 1
+    # 去重检查和报告
+    if args.check_duplicates and len(urls) > 1:
+        from .url_dedup import detect_duplicates, format_duplicate_report, generate_duplicate_report
 
-    print(f"[summary] total={len(urls)} success={success} failed={failed}")
-    return 0 if failed == 0 else 1
+        dedup_result = detect_duplicates(urls)
+
+        if args.report_duplicates_only:
+            if dedup_result.duplicate_count > 0:
+                reports = generate_duplicate_report(urls)
+                print(format_duplicate_report(reports))
+            print(f"\n原始 URL 数：{dedup_result.original_count}")
+            print(f"唯一 URL 数：{dedup_result.unique_count}")
+            print(f"重复 URL 数：{dedup_result.duplicate_count}")
+            return 0
+
+        if dedup_result.duplicate_count > 0:
+            reports = generate_duplicate_report(urls)
+            print(format_duplicate_report(reports))
+            # 使用去重后的 URL
+            urls = dedup_result.unique_urls
+            print(f"✓ 已跳过 {dedup_result.duplicate_count} 个重复 URL")
+
+    out_dir = args.output_dir.expanduser().resolve()
+
+    # 批量下载模式
+    if is_batch_mode:
+        return _run_batch_download(args, urls)
+
+    # 单 URL 模式
+    url = urls[0]
+    print(f"[task] 1/1 {url}")
+    result = run_site_download(
+        page_url=url,
+        output_dir=out_dir,
+        browser=args.browser,
+        profile=args.profile,
+        capture_seconds=max(10, int(args.capture_seconds)),
+        use_runtime_capture=not args.no_runtime_capture,
+        log_func=print,
+    )
+    print(f"[log] {result.log_file}")
+    if result.ok and result.output_file:
+        print(f"[saved] {result.output_file}")
+        return 0
+    else:
+        print("[error] 未下载到视频。请查看日志。")
+        return 1
+
+
+def _run_batch_download(args: argparse.Namespace, urls: list[str]) -> int:
+    """执行批量下载"""
+    import asyncio
+    from .batch_downloader import BatchDownloader, BatchDownloadConfig
+
+    print(f"\n开始批量下载：{len(urls)} 个 URL")
+    print(f"输出目录：{args.output_dir}")
+    print(f"最大并发数：{args.max_concurrent}")
+    print()
+
+    # 创建配置
+    config = BatchDownloadConfig(
+        url_file=args.url_file,
+        output_dir=args.output_dir.expanduser().resolve(),
+        check_duplicates=args.check_duplicates,
+        concurrency=args.max_concurrent,
+        browser=args.browser,
+        profile=args.profile,
+    )
+
+    # 创建下载器并执行
+    downloader = BatchDownloader(config)
+    result = asyncio.run(downloader.run())
+
+    # 打印报告
+    print()
+    print("=" * 60)
+    print("批量下载完成报告")
+    print("=" * 60)
+    print(f"总 URL 数：    {result.total}")
+    print(f"下载成功：    {result.succeeded}")
+    print(f"下载失败：    {result.failed}")
+    print(f"跳过重复：    {result.skipped}")
+    print(f"成功率：      {(result.succeeded / (result.succeeded + result.failed) * 100) if (result.succeeded + result.failed) > 0 else 0:.1f}%")
+    print(f"总耗时：      {result.duration:.1f}秒")
+    print("=" * 60)
+
+    # 返回状态码
+    return 0 if result.failed == 0 else 1
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@
 - 性能监控装饰器
 
 典型用法:
-    >>> from webvidgrab.logging import create_logger, log_context
+    >>> from webvidgrab.logger import create_logger, log_context
     >>>
     >>> # 创建日志器
     >>> logger = create_logger("myapp", level="INFO")

@@ -1,0 +1,68 @@
+# PSiteDL 示例 URL 文件
+# =====================
+# 
+# 使用说明:
+# 1. 复制此文件：cp urls_sample.txt my_urls.txt
+# 2. 编辑 my_urls.txt，替换为真实的视频页面 URL
+# 3. 执行下载：psitedl --url-file "my_urls.txt" --output-dir "~/Downloads"
+#
+# 文件格式:
+# - 每行一个 URL
+# - 支持空行 (自动跳过)
+# - 支持注释 (以 # 开头)
+
+# ========== 示例 1: 教程视频 ==========
+# 替换为真实的教程网站 URL
+https://example.com/tutorial/python-basics
+https://example.com/tutorial/python-advanced
+https://example.com/tutorial/web-development
+https://example.com/tutorial/data-science
+
+# ========== 示例 2: 纪录片 ==========
+# 替换为真实的纪录片网站 URL
+https://example.com/documentary/nature
+https://example.com/documentary/technology
+https://example.com/documentary/history
+https://example.com/documentary/science
+
+# ========== 示例 3: 在线课程 ==========
+# 替换为真实的课程网站 URL
+https://example.com/course/machine-learning
+https://example.com/course/deep-learning
+https://example.com/course/natural-language-processing
+https://example.com/course/computer-vision
+
+# ========== 示例 4: 技术演讲 ==========
+# 替换为真实的演讲网站 URL
+https://example.com/talk/conference-2024-keynote
+https://example.com/talk/tech-trends-2025
+https://example.com/talk/ai-future-panel
+
+# ========== 测试 URL (无效，仅用于演示) ==========
+# 这些 URL 仅用于演示格式，实际下载会失败
+https://example.com/test/video1
+https://example.com/test/video2
+https://example.com/test/video3
+
+# ========== 提示 ==========
+# 
+# 批量下载命令示例:
+# 
+# 基本下载:
+#   psitedl --url-file "my_urls.txt" --output-dir "~/Downloads"
+#
+# 并发下载 (推荐):
+#   psitedl --url-file "my_urls.txt" --output-dir "~/Downloads" --concurrency 5
+#
+# 高并发 + 重试:
+#   psitedl --url-file "my_urls.txt" --output-dir "~/Downloads" \
+#     --concurrency 10 --max-retries 5
+#
+# 带宽限制 (后台下载):
+#   psitedl --url-file "my_urls.txt" --output-dir "~/Downloads" \
+#     --concurrency 2 --bandwidth-limit 5
+#
+# 详细文档:
+#   - docs/BATCH_DOWNLOAD.md - 批量下载完整指南
+#   - docs/URL_DEDUP.md - URL 去重说明
+#   - README.md - 主文档

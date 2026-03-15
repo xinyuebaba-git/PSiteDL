@@ -1,15 +1,378 @@
 from __future__ import annotations
 
+import os
 import queue
+import sys
 import tkinter as tk
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import BOTH, END, LEFT, W, filedialog, messagebox, ttk
+from typing import Callable
 
-from webvidgrab.site_cli import ProbeResult, run_site_download
+
+# ============================================================================
+# Dark Orange Color Palette
+# ============================================================================
+class DarkOrangeColors:
+    """暗黑橙色风格配色方案"""
+    
+    # 背景色
+    BACKGROUND = "#1a1a1a"
+    CARD_BACKGROUND = "#2d2d2d"
+    INPUT_BACKGROUND = "#252525"
+    
+    # 主色调 - 橙色
+    PRIMARY = "#ff6b00"
+    PRIMARY_HOVER = "#ffab40"
+    PRIMARY_PRESSED = "#e65c00"
+    PRIMARY_GRADIENT_END = "#ff8533"
+    
+    # 文字颜色
+    TEXT_PRIMARY = "#e0e0e0"
+    TEXT_SECONDARY = "#a0a0a0"
+    TEXT_BODY = "#e0e0e0"
+    TEXT_DISABLED = "#505050"
+    TEXT_HIGHLIGHT = "#ff9500"
+    TEXT_PLACEHOLDER = "#707070"
+    
+    # 边框和分隔线
+    BORDER = "#404040"
+    BORDER_FOCUS = "#ff6b00"
+    SEPARATOR = "#353535"
+    
+    # 功能色
+    SUCCESS = "#4caf50"
+    WARNING = "#ff9800"
+    ERROR = "#f44336"
+    PROGRESS_BACKGROUND = "#353535"
+    
+    # 列表选中
+    LIST_SELECTION = "#ff6b00"
 
 
+# ============================================================================
+# Custom Styled Components - Dark Orange Theme
+# ============================================================================
+class DarkOrangeButton(tk.Canvas):
+    """暗黑橙色风格按钮 - 支持圆角和渐变效果"""
+    
+    def __init__(
+        self,
+        master,
+        text: str,
+        command: Callable | None = None,
+        width: int = 120,
+        height: int = 44,
+        style: str = "primary",
+        **kwargs
+    ):
+        super().__init__(
+            master,
+            width=width,
+            height=height,
+            highlightthickness=0,
+            **kwargs
+        )
+        
+        self.text = text
+        self.command = command
+        self.style = style  # primary, secondary, danger
+        self.width = width
+        self.height = height
+        self.radius = 10
+        self.state = "normal"  # normal, hover, pressed, disabled
+        
+        self._draw_button()
+        self._bind_events()
+    
+    def _draw_button(self):
+        """绘制按钮"""
+        self.delete("all")
+        
+        if self.state == "disabled":
+            bg_color = "#404040"
+            text_color = DarkOrangeColors.TEXT_DISABLED
+        elif self.state == "pressed":
+            bg_color = DarkOrangeColors.PRIMARY_PRESSED
+            text_color = "#ffffff"
+        elif self.state == "hover":
+            bg_color = DarkOrangeColors.PRIMARY_HOVER
+            text_color = "#ffffff"
+        else:
+            # 根据样式选择颜色
+            if self.style == "primary":
+                bg_color = DarkOrangeColors.PRIMARY
+            elif self.style == "danger":
+                bg_color = DarkOrangeColors.ERROR
+            else:  # secondary
+                bg_color = DarkOrangeColors.PRIMARY
+            text_color = "#ffffff"
+        
+        # 绘制圆角矩形背景
+        self._rounded_rectangle(
+            0, 0, self.width, self.height,
+            self.radius,
+            fill=bg_color,
+            outline=""
+        )
+        
+        # 绘制文字
+        self.create_text(
+            self.width // 2,
+            self.height // 2,
+            text=self.text,
+            fill=text_color,
+            font=("SF Pro Text", 15, "bold")
+        )
+    
+    def _rounded_rectangle(self, x1, y1, x2, y2, radius, **kwargs):
+        """绘制圆角矩形"""
+        points = [
+            x1 + radius, y1,
+            x2 - radius, y1,
+            x2, y1,
+            x2, y1 + radius,
+            x2, y2 - radius,
+            x2, y2,
+            x2 - radius, y2,
+            x1 + radius, y2,
+            x1, y2,
+            x1, y2 - radius,
+            x1, y1 + radius,
+            x1, y1,
+        ]
+        return self.create_polygon(points, smooth=True, **kwargs)
+    
+    def _bind_events(self):
+        """绑定事件"""
+        if self.state != "disabled":
+            self.bind("<Enter>", self._on_enter)
+            self.bind("<Leave>", self._on_leave)
+            self.bind("<Button-1>", self._on_press)
+            self.bind("<ButtonRelease-1>", self._on_release)
+    
+    def _on_enter(self, event):
+        self.state = "hover"
+        self._draw_button()
+    
+    def _on_leave(self, event):
+        self.state = "normal"
+        self._draw_button()
+    
+    def _on_press(self, event):
+        self.state = "pressed"
+        self._draw_button()
+    
+    def _on_release(self, event):
+        self.state = "hover"
+        self._draw_button()
+        if self.command:
+            self.command()
+    
+    def set_enabled(self, enabled: bool):
+        """设置启用状态"""
+        self.state = "normal" if enabled else "disabled"
+        self._draw_button()
+        if not enabled:
+            self.unbind("<Enter>")
+            self.unbind("<Leave>")
+            self.unbind("<Button-1>")
+            self.unbind("<ButtonRelease-1>")
+        else:
+            self._bind_events()
+
+
+class DarkOrangeCard(tk.LabelFrame):
+    """暗黑橙色风格卡片容器"""
+    
+    def __init__(self, master, title: str = "", padding: int = 16, **kwargs):
+        super().__init__(
+            master,
+            bg=DarkOrangeColors.CARD_BACKGROUND,
+            fg=DarkOrangeColors.TEXT_PRIMARY,
+            padx=padding,
+            pady=padding,
+            **kwargs
+        )
+        
+        self.configure(
+            text=title,
+            font=("SF Pro Text", 14, "bold"),
+            relief=tk.FLAT,
+            borderwidth=0
+        )
+    
+    def create_separator(self, parent):
+        """创建分隔线"""
+        sep = tk.Frame(
+            parent,
+            height=1,
+            bg=DarkOrangeColors.SEPARATOR
+        )
+        return sep
+
+
+class DarkOrangeEntry(tk.Entry):
+    """暗黑橙色风格输入框"""
+    
+    def __init__(self, master, **kwargs):
+        super().__init__(
+            master,
+            bg=DarkOrangeColors.INPUT_BACKGROUND,
+            fg=DarkOrangeColors.TEXT_BODY,
+            insertbackground=DarkOrangeColors.PRIMARY,
+            relief=tk.FLAT,
+            borderwidth=1,
+            highlightthickness=1,
+            highlightbackground=DarkOrangeColors.BORDER,
+            highlightcolor=DarkOrangeColors.BORDER_FOCUS,
+            font=("SF Pro Text", 15),
+            **kwargs
+        )
+        
+        self.bind("<FocusIn>", self._on_focus_in)
+        self.bind("<FocusOut>", self._on_focus_out)
+    
+    def _on_focus_in(self, event):
+        self.configure(highlightthickness=2)
+    
+    def _on_focus_out(self, event):
+        self.configure(highlightthickness=1)
+
+
+class DarkOrangeText(tk.Text):
+    """暗黑橙色风格文本框"""
+    
+    def __init__(self, master, **kwargs):
+        super().__init__(
+            master,
+            bg=DarkOrangeColors.INPUT_BACKGROUND,
+            fg=DarkOrangeColors.TEXT_BODY,
+            insertbackground=DarkOrangeColors.PRIMARY,
+            relief=tk.FLAT,
+            borderwidth=1,
+            highlightthickness=1,
+            highlightbackground=DarkOrangeColors.BORDER,
+            highlightcolor=DarkOrangeColors.BORDER_FOCUS,
+            font=("SF Pro Text", 15),
+            padx=12,
+            pady=12,
+            **kwargs
+        )
+    
+    def set_placeholder(self, placeholder: str):
+        """设置占位符文本"""
+        self.insert("1.0", placeholder)
+        self.configure(fg=DarkOrangeColors.TEXT_PLACEHOLDER)
+    
+    def delete_placeholder(self):
+        """删除占位符并恢复文字颜色"""
+        content = self.get("1.0", END).strip()
+        if content and self.cget("fg") == DarkOrangeColors.TEXT_PLACEHOLDER:
+            self.delete("1.0", END)
+            self.configure(fg=DarkOrangeColors.TEXT_BODY)
+
+
+class DarkOrangeProgressbar(tk.Canvas):
+    """暗黑橙色风格进度条"""
+    
+    def __init__(self, master, width: int = 300, height: int = 8, **kwargs):
+        super().__init__(
+            master,
+            width=width,
+            height=height,
+            highlightthickness=0,
+            **kwargs
+        )
+        
+        self.width = width
+        self.height = height
+        self.radius = height // 2
+        self.progress = 0
+        
+        self._draw_background()
+        self._draw_progress()
+    
+    def _draw_background(self):
+        """绘制背景轨道"""
+        self._rounded_rectangle(
+            0, 0, self.width, self.height,
+            self.radius,
+            fill=DarkOrangeColors.PROGRESS_BACKGROUND
+        )
+    
+    def _draw_progress(self):
+        """绘制进度"""
+        self.delete("progress")
+        if self.progress > 0:
+            progress_width = int(self.width * self.progress / 100)
+            self._rounded_rectangle(
+                0, 0, progress_width, self.height,
+                self.radius,
+                fill=DarkOrangeColors.PRIMARY,
+                tags="progress"
+            )
+    
+    def _rounded_rectangle(self, x1, y1, x2, y2, radius, **kwargs):
+        """绘制圆角矩形"""
+        points = [
+            x1 + radius, y1,
+            x2 - radius, y1,
+            x2, y1,
+            x2, y1 + radius,
+            x2, y2 - radius,
+            x2, y2,
+            x2 - radius, y2,
+            x1 + radius, y2,
+            x1, y2,
+            x1, y2 - radius,
+            x1, y1 + radius,
+            x1, y1,
+        ]
+        return self.create_polygon(points, smooth=True, **kwargs)
+    
+    def set_progress(self, value: float):
+        """设置进度值 (0-100)"""
+        self.progress = max(0, min(100, value))
+        self._draw_progress()
+
+
+class DarkOrangeNotebook(ttk.Notebook):
+    """暗黑橙色风格标签页"""
+    
+    def __init__(self, master, **kwargs):
+        super().__init__(
+            master,
+            style="DarkOrange.TNotebook",
+            **kwargs
+        )
+        
+        # 配置样式
+        self.style = ttk.Style()
+        self.style.configure(
+            "DarkOrange.TNotebook",
+            background=DarkOrangeColors.CARD_BACKGROUND,
+            bordercolor=DarkOrangeColors.BORDER,
+            tabmargins=[0, 0, 0, 0],
+        )
+        self.style.configure(
+            "DarkOrange.TNotebook.Tab",
+            background=DarkOrangeColors.INPUT_BACKGROUND,
+            foreground=DarkOrangeColors.TEXT_SECONDARY,
+            padding=[16, 8],
+            font=("SF Pro Text", 13),
+        )
+        self.style.map(
+            "DarkOrange.TNotebook.Tab",
+            background=[("selected", DarkOrangeColors.PRIMARY)],
+            foreground=[("selected", "#ffffff")],
+        )
+
+
+# ============================================================================
+# Main Application
+# ============================================================================
 @dataclass
 class DownloadTask:
     task_id: int
@@ -24,16 +387,27 @@ class DownloadTask:
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("PSiteDL")
-        self.root.geometry("1180x820")
-
+        self.root.title("PSiteDL - 视频下载工具")
+        self.root.geometry("1200x850")
+        self.root.configure(bg=DarkOrangeColors.BACKGROUND)
+        
+        # 加载并设置窗口图标
+        self._load_icon()
+        
+        # 设置 DPI 感知（Windows）
+        try:
+            from ctypes import windll
+            windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            pass
+        
         self.output_dir = tk.StringVar(value=str((Path.home() / "Downloads").resolve()))
         self.browser = tk.StringVar(value="chrome")
         self.profile = tk.StringVar(value="Default")
         self.capture_seconds = tk.StringVar(value="30")
         self.use_runtime_capture = tk.BooleanVar(value=True)
         self.status_text = tk.StringVar(value="就绪")
-
+        
         self.running = False
         self.next_task_id = 1
         self.tasks: dict[int, DownloadTask] = {}
@@ -42,126 +416,495 @@ class App:
         self.completed_ids: list[int] = []
         self.executor: ThreadPoolExecutor | None = None
         self.log_queue: queue.Queue[tuple[str, object]] = queue.Queue()
-
+        
         self._build_ui()
         self._poll_logs()
-
+    
+    def _load_icon(self) -> None:
+        """加载应用程序图标
+        
+        支持多种格式：
+        - Windows: .ico
+        - macOS: .icns
+        - Linux: .png
+        """
+        try:
+            # 获取图标文件路径
+            script_dir = Path(__file__).parent
+            project_root = script_dir.parent.parent
+            assets_dir = project_root / "assets"
+            
+            # 根据不同平台选择图标格式
+            if os.name == "nt":  # Windows
+                icon_path = assets_dir / "psitedl_icon.ico"
+                if icon_path.exists():
+                    self.root.iconbitmap(str(icon_path))
+            elif os.name == "posix":
+                # macOS 和 Linux 使用 PNG
+                icon_path = assets_dir / "psitedl_icon.png"
+                if icon_path.exists():
+                    # 尝试设置 PNG 图标
+                    try:
+                        icon_img = tk.PhotoImage(file=str(icon_path))
+                        self.root.iconphoto(True, icon_img)
+                        # 保持引用防止被垃圾回收
+                        self._icon_image = icon_img
+                    except Exception:
+                        pass
+                
+                # macOS 额外尝试.icns
+                if sys.platform == "darwin":
+                    icns_path = assets_dir / "icon.icns"
+                    if icns_path.exists():
+                        # macOS 可以通过设置 dock 图标
+                        pass
+            
+            print(f"[✓] 图标加载成功")
+        except Exception as e:
+            print(f"[!] 图标加载失败：{e}")
+    
     def _build_ui(self) -> None:
-        top = ttk.Frame(self.root, padding=12)
-        top.pack(fill=BOTH, expand=True)
-
-        form = ttk.LabelFrame(top, text="任务输入", padding=10)
-        form.pack(fill=BOTH)
-
-        ttk.Label(form, text="网页播放URL（每行一个）").grid(
-            row=0, column=0, sticky=W, padx=(0, 8), pady=4
+        """构建用户界面 - 左右分栏布局"""
+        
+        # 主容器
+        main_frame = tk.Frame(self.root, bg=DarkOrangeColors.BACKGROUND)
+        main_frame.pack(fill=BOTH, expand=True, padx=24, pady=24)
+        
+        # 1. 标题区
+        self._build_header(main_frame)
+        
+        # 2. 左右分栏容器 (使用 PanedWindow 实现可调节分栏)
+        paned = tk.PanedWindow(
+            main_frame,
+            orient=tk.HORIZONTAL,
+            bg=DarkOrangeColors.BACKGROUND,
+            relief=tk.FLAT,
+            borderwidth=0,
+            sashwidth=6,
+            sashrelief=tk.RAISED
         )
-        self.url_text = tk.Text(form, height=3)
-        self.url_text.grid(row=0, column=1, columnspan=3, sticky="ew", pady=4)
-
-        ttk.Label(form, text="输出目录").grid(row=1, column=0, sticky=W, padx=(0, 8), pady=4)
-        ttk.Entry(form, textvariable=self.output_dir).grid(
-            row=1, column=1, columnspan=2, sticky="ew", pady=4
+        paned.pack(fill=BOTH, expand=True, pady=(16, 0))
+        
+        # 左侧操作区容器
+        left_frame = tk.Frame(paned, bg=DarkOrangeColors.BACKGROUND)
+        paned.add(left_frame, minsize=700, width=720)
+        
+        # 右侧日志区容器
+        right_frame = tk.Frame(paned, bg=DarkOrangeColors.BACKGROUND)
+        paned.add(right_frame, minsize=450, width=480)
+        
+        # 构建左侧操作区
+        self._build_left_panel(left_frame)
+        
+        # 构建右侧日志区
+        self._build_right_panel(right_frame)
+        
+        # 设置初始分栏比例 (60:40)
+        # 设置初始分隔位置 (720px)
+        # paned.sash_pos 在某些系统上不可用，使用 pack_propagate 替代
+        try:
+            paned.sash_pos(0, 720)
+        except AttributeError:
+            # 如果 sash_pos 不可用，使用默认位置
+            pass
+    
+    def _build_header(self, parent):
+        """构建标题区"""
+        header_frame = tk.Frame(parent, bg=DarkOrangeColors.BACKGROUND)
+        header_frame.pack(fill=tk.X, pady=(0, 20))
+        
+        # 加载标题栏图标（64x64）
+        try:
+            script_dir = Path(__file__).parent
+            project_root = script_dir.parent.parent
+            icon_path = project_root / "assets" / "icon-64.png"
+            if icon_path.exists():
+                self.header_icon = tk.PhotoImage(file=str(icon_path))
+                icon_label = tk.Label(
+                    header_frame,
+                    image=self.header_icon,
+                    bg=DarkOrangeColors.BACKGROUND
+                )
+                icon_label.pack(side=tk.LEFT, padx=(0, 12), pady=(0, 0))
+        except Exception as e:
+            print(f"[!] 标题栏图标加载失败：{e}")
+        
+        # 主标题 - 橙色强调
+        title_label = tk.Label(
+            header_frame,
+            text="PSiteDL",
+            font=("SF Pro Display", 28, "bold"),
+            fg=DarkOrangeColors.TEXT_HIGHLIGHT,
+            bg=DarkOrangeColors.BACKGROUND,
+            anchor="w"
         )
-        ttk.Button(form, text="浏览", command=self._pick_output_dir).grid(
-            row=1, column=3, sticky="ew", pady=4
+        title_label.pack(side=tk.LEFT)
+        
+        # 副标题
+        subtitle_label = tk.Label(
+            header_frame,
+            text="视频下载工具",
+            font=("SF Pro Text", 17),
+            fg=DarkOrangeColors.TEXT_SECONDARY,
+            bg=DarkOrangeColors.BACKGROUND,
+            anchor="w"
         )
-
-        ttk.Label(form, text="浏览器").grid(row=2, column=0, sticky=W, padx=(0, 8), pady=4)
-        ttk.Combobox(
-            form,
-            textvariable=self.browser,
-            values=["chrome", "chromium", "edge", "brave"],
-            state="readonly",
-        ).grid(row=2, column=1, sticky="ew", pady=4)
-        ttk.Label(form, text="Profile").grid(row=2, column=2, sticky=W, padx=(12, 8), pady=4)
-        ttk.Entry(form, textvariable=self.profile).grid(row=2, column=3, sticky="ew", pady=4)
-
-        ttk.Label(form, text="运行时探测秒数").grid(row=3, column=0, sticky=W, padx=(0, 8), pady=4)
-        ttk.Entry(form, textvariable=self.capture_seconds).grid(
-            row=3, column=1, sticky="ew", pady=4
+        subtitle_label.pack(side=tk.LEFT, padx=(12, 0), pady=(8, 0))
+    
+    def _build_left_panel(self, parent):
+        """构建左侧操作区"""
+        # URL 输入卡片
+        self._build_url_card(parent)
+        
+        # 设置卡片
+        self._build_settings_card(parent)
+        
+        # 操作按钮区
+        self._build_controls_card(parent)
+        
+        # 任务管理卡片
+        self._build_tasks_card(parent)
+    
+    def _build_right_panel(self, parent):
+        """构建右侧日志区"""
+        # 日志卡片 (占满整个右侧区域)
+        self._build_log_card(parent)
+    
+    def _build_url_card(self, parent):
+        """构建 URL 输入卡片"""
+        card = DarkOrangeCard(parent, text="视频 URL", padding=20)
+        card.pack(fill=tk.X, pady=(0, 16))
+        
+        # URL 输入框
+        self.url_text = DarkOrangeText(card, height=4)
+        self.url_text.pack(fill=tk.X, pady=(8, 0))
+        self.url_text.set_placeholder("请输入视频播放页面 URL（每行一个）")
+        
+        # 绑定焦点事件以清除占位符
+        self.url_text.bind("<FocusIn>", lambda e: self.url_text.delete_placeholder())
+    
+    def _build_settings_card(self, parent):
+        """构建设置卡片"""
+        card = DarkOrangeCard(parent, text="设置", padding=20)
+        card.pack(fill=tk.X, pady=(0, 16))
+        
+        # 设置网格布局
+        settings_frame = tk.Frame(card, bg=DarkOrangeColors.CARD_BACKGROUND)
+        settings_frame.pack(fill=tk.X)
+        
+        # 第一行：浏览器、Profile、输出目录
+        row1 = tk.Frame(settings_frame, bg=DarkOrangeColors.CARD_BACKGROUND)
+        row1.pack(fill=tk.X, pady=(0, 16))
+        
+        # 浏览器选择
+        browser_frame = self._create_setting_field(
+            row1,
+            "浏览器",
+            ["chrome", "chromium", "edge", "brave"],
+            self.browser
         )
-        ttk.Checkbutton(
-            form,
-            text="启用运行时探测(会打开浏览器并抓播放请求)",
+        browser_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=(0, 16))
+        
+        # Profile
+        profile_frame = self._create_setting_field(
+            row1,
+            "Profile",
+            None,
+            self.profile,
+            is_entry=True
+        )
+        profile_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=(0, 16))
+        
+        # 输出目录
+        output_frame = self._create_setting_field(
+            row1,
+            "输出目录",
+            None,
+            self.output_dir,
+            is_entry=True,
+            has_button=True,
+            button_text="浏览",
+            button_command=self._pick_output_dir
+        )
+        output_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        
+        # 第二行：运行时探测
+        row2 = tk.Frame(settings_frame, bg=DarkOrangeColors.CARD_BACKGROUND)
+        row2.pack(fill=tk.X)
+        
+        seconds_frame = self._create_setting_field(
+            row2,
+            "运行时探测秒数",
+            None,
+            self.capture_seconds,
+            is_entry=True
+        )
+        seconds_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=(0, 16))
+        
+        # 运行时探测开关 - 橙色主题
+        capture_check = tk.Checkbutton(
+            row2,
+            text="启用运行时探测 (会打开浏览器并抓播放请求)",
             variable=self.use_runtime_capture,
-        ).grid(row=3, column=2, columnspan=2, sticky=W, pady=4)
-
-        note = "支持并发3线程下载；显示切片进度(已下载/总切片)；完成后自动进入“已完成任务”。"
-        ttk.Label(form, text=note, foreground="#666").grid(
-            row=4, column=0, columnspan=4, sticky=W, pady=(4, 2)
+            font=("SF Pro Text", 13),
+            fg=DarkOrangeColors.TEXT_BODY,
+            bg=DarkOrangeColors.CARD_BACKGROUND,
+            selectcolor=DarkOrangeColors.CARD_BACKGROUND,
+            activebackground=DarkOrangeColors.CARD_BACKGROUND,
+            activeforeground=DarkOrangeColors.TEXT_BODY
         )
-
-        form.columnconfigure(1, weight=1)
-        form.columnconfigure(3, weight=1)
-
-        ctrl = ttk.Frame(top)
-        ctrl.pack(fill=BOTH, pady=(10, 0))
-        self.add_btn = ttk.Button(ctrl, text="加入待下载", command=self._add_tasks)
-        self.add_btn.pack(side=LEFT)
-        self.start_btn = ttk.Button(ctrl, text="启动队列下载(3并发)", command=self._start_queue)
-        self.start_btn.pack(side=LEFT, padx=(8, 0))
-        self.clear_pending_btn = ttk.Button(ctrl, text="清空待下载", command=self._clear_pending)
-        self.clear_pending_btn.pack(side=LEFT, padx=(8, 0))
-        ttk.Button(ctrl, text="清空日志", command=self._clear_log).pack(side=LEFT, padx=(8, 0))
-        ttk.Label(ctrl, textvariable=self.status_text).pack(side=LEFT, padx=(12, 0))
-
-        split = ttk.Panedwindow(top, orient=tk.VERTICAL)
-        split.pack(fill=BOTH, expand=True, pady=(10, 0))
-
-        list_frame = ttk.Frame(split)
-        split.add(list_frame, weight=3)
-        log_frame = ttk.LabelFrame(split, text="运行日志", padding=10)
-        split.add(log_frame, weight=2)
-
-        task_tabs = ttk.Notebook(list_frame)
+        capture_check.pack(side=tk.LEFT, padx=(16, 0))
+    
+    def _create_setting_field(
+        self,
+        parent,
+        label: str,
+        values: list[str] | None,
+        variable: tk.StringVar,
+        is_entry: bool = False,
+        has_button: bool = False,
+        button_text: str = "",
+        button_command: Callable | None = None
+    ):
+        """创建设置字段"""
+        frame = tk.Frame(parent, bg=DarkOrangeColors.CARD_BACKGROUND)
+        
+        # 标签 - 橙色强调
+        label_widget = tk.Label(
+            frame,
+            text=label,
+            font=("SF Pro Text", 13, "bold"),
+            fg=DarkOrangeColors.TEXT_HIGHLIGHT,
+            bg=DarkOrangeColors.CARD_BACKGROUND,
+            anchor="w"
+        )
+        label_widget.pack(fill=tk.X, pady=(0, 8))
+        
+        # 输入控件
+        if values:
+            # 下拉选择 - 自定义样式
+            combo = ttk.Combobox(
+                frame,
+                textvariable=variable,
+                values=values,
+                state="readonly",
+                font=("SF Pro Text", 14),
+                height=8
+            )
+            combo.pack(fill=tk.X)
+            # 配置下拉框样式
+            combo.configure(
+                background=DarkOrangeColors.INPUT_BACKGROUND,
+                foreground=DarkOrangeColors.TEXT_BODY,
+            )
+        elif has_button:
+            # 输入框 + 按钮
+            entry_frame = tk.Frame(frame, bg=DarkOrangeColors.CARD_BACKGROUND)
+            entry_frame.pack(fill=tk.X)
+            
+            entry = DarkOrangeEntry(entry_frame, textvariable=variable)
+            entry.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 8))
+            
+            button = DarkOrangeButton(
+                entry_frame,
+                text=button_text,
+                command=button_command,
+                width=80,
+                height=38,
+                style="secondary"
+            )
+            button.pack(side=tk.RIGHT)
+        else:
+            # 纯输入框
+            entry = DarkOrangeEntry(frame, textvariable=variable)
+            entry.pack(fill=tk.X)
+        
+        return frame
+    
+    def _build_controls_card(self, parent):
+        """构建操作按钮卡片"""
+        card = DarkOrangeCard(parent, text="", padding=20)
+        card.pack(fill=tk.X, pady=(0, 16))
+        
+        controls_frame = tk.Frame(card, bg=DarkOrangeColors.CARD_BACKGROUND)
+        controls_frame.pack(fill=tk.X)
+        
+        # 按钮组
+        self.add_btn = DarkOrangeButton(
+            controls_frame,
+            text="加入待下载",
+            command=self._add_tasks,
+            width=140,
+            height=44,
+            style="secondary"
+        )
+        self.add_btn.pack(side=tk.LEFT, padx=(0, 12))
+        
+        self.start_btn = DarkOrangeButton(
+            controls_frame,
+            text="启动下载",
+            command=self._start_queue,
+            width=140,
+            height=44,
+            style="primary"
+        )
+        self.start_btn.pack(side=tk.LEFT, padx=(0, 12))
+        
+        self.clear_pending_btn = DarkOrangeButton(
+            controls_frame,
+            text="清空待下载",
+            command=self._clear_pending,
+            width=140,
+            height=44,
+            style="danger"
+        )
+        self.clear_pending_btn.pack(side=tk.LEFT, padx=(0, 12))
+        
+        # 清空日志按钮
+        clear_log_btn = DarkOrangeButton(
+            controls_frame,
+            text="清空日志",
+            command=self._clear_log,
+            width=100,
+            height=44,
+            style="secondary"
+        )
+        clear_log_btn.pack(side=tk.LEFT, padx=(0, 24))
+        
+        # 状态显示 - 橙色强调
+        status_label = tk.Label(
+            controls_frame,
+            textvariable=self.status_text,
+            font=("SF Pro Text", 14),
+            fg=DarkOrangeColors.TEXT_HIGHLIGHT,
+            bg=DarkOrangeColors.CARD_BACKGROUND,
+            anchor="w"
+        )
+        status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    
+    def _build_tasks_card(self, parent):
+        """构建任务管理卡片"""
+        card = DarkOrangeCard(parent, text="任务管理", padding=20)
+        card.pack(fill=BOTH, expand=True, pady=(0, 16))
+        
+        # 标签页 - 暗黑橙色风格
+        task_tabs = DarkOrangeNotebook(card, padding=0)
         task_tabs.pack(fill=BOTH, expand=True)
-
-        pending_tab = ttk.Frame(task_tabs, padding=8)
-        active_tab = ttk.Frame(task_tabs, padding=8)
-        completed_tab = ttk.Frame(task_tabs, padding=8)
-        task_tabs.add(pending_tab, text="待下载任务")
-        task_tabs.add(active_tab, text="正在下载任务")
-        task_tabs.add(completed_tab, text="已完成任务")
-
-        self.pending_list = tk.Listbox(pending_tab, height=12)
-        self.pending_list.pack(fill=BOTH, expand=True)
-
+        
+        # 待下载任务
+        pending_tab = tk.Frame(task_tabs, bg=DarkOrangeColors.CARD_BACKGROUND)
+        task_tabs.add(pending_tab, text="  待下载  ")
+        
+        self.pending_list = tk.Listbox(
+            pending_tab,
+            font=("SF Pro Text", 14),
+            fg=DarkOrangeColors.TEXT_BODY,
+            bg=DarkOrangeColors.INPUT_BACKGROUND,
+            selectbackground=DarkOrangeColors.LIST_SELECTION,
+            selectforeground="#ffffff",
+            highlightthickness=0,
+            borderwidth=0,
+            activestyle="none"
+        )
+        self.pending_list.pack(fill=BOTH, expand=True, padx=8, pady=8)
+        
+        # 正在下载任务
+        active_tab = tk.Frame(task_tabs, bg=DarkOrangeColors.CARD_BACKGROUND)
+        task_tabs.add(active_tab, text="  下载中  ")
+        
         self.active_tree = ttk.Treeview(
             active_tab,
             columns=("url", "progress", "status"),
             show="headings",
-            height=12,
+            height=10
         )
         self.active_tree.heading("url", text="URL")
-        self.active_tree.heading("progress", text="切片进度")
+        self.active_tree.heading("progress", text="进度")
         self.active_tree.heading("status", text="状态")
-        self.active_tree.column("url", width=680, anchor=W)
-        self.active_tree.column("progress", width=140, anchor=W)
-        self.active_tree.column("status", width=160, anchor=W)
-        self.active_tree.pack(fill=BOTH, expand=True)
-
-        self.completed_list = tk.Listbox(completed_tab, height=12)
-        self.completed_list.pack(fill=BOTH, expand=True)
-
-        self.log_text = tk.Text(log_frame, state=tk.DISABLED, height=14)
+        self.active_tree.column("url", width=600, anchor=W)
+        self.active_tree.column("progress", width=120, anchor=W)
+        self.active_tree.column("status", width=140, anchor=W)
+        self.active_tree.pack(fill=BOTH, expand=True, padx=8, pady=8)
+        
+        # 配置 Treeview 样式 (使用 ttk.Style)
+        style = ttk.Style()
+        style.configure(
+            "DarkOrange.Treeview",
+            background=DarkOrangeColors.INPUT_BACKGROUND,
+            foreground=DarkOrangeColors.TEXT_BODY,
+            fieldbackground=DarkOrangeColors.INPUT_BACKGROUND,
+            font=("SF Pro Text", 13)
+        )
+        style.configure(
+            "DarkOrange.Treeview.Heading",
+            background=DarkOrangeColors.CARD_BACKGROUND,
+            foreground=DarkOrangeColors.TEXT_PRIMARY,
+            font=("SF Pro Text", 13, "bold")
+        )
+        self.active_tree.configure(style="DarkOrange.Treeview")
+        
+        # 设置行样式
+        self.active_tree.tag_configure("default", background=DarkOrangeColors.INPUT_BACKGROUND)
+        
+        # 已完成任务
+        completed_tab = tk.Frame(task_tabs, bg=DarkOrangeColors.CARD_BACKGROUND)
+        task_tabs.add(completed_tab, text="  已完成  ")
+        
+        self.completed_list = tk.Listbox(
+            completed_tab,
+            font=("SF Pro Text", 14),
+            fg=DarkOrangeColors.TEXT_BODY,
+            bg=DarkOrangeColors.INPUT_BACKGROUND,
+            selectbackground=DarkOrangeColors.SUCCESS,
+            selectforeground="#ffffff",
+            highlightthickness=0,
+            borderwidth=0,
+            activestyle="none"
+        )
+        self.completed_list.pack(fill=BOTH, expand=True, padx=8, pady=8)
+    
+    def _build_log_card(self, parent):
+        """构建日志卡片 - 右侧全屏日志区"""
+        card = DarkOrangeCard(parent, text="运行日志", padding=20)
+        card.pack(fill=BOTH, expand=True)
+        
+        # 日志文本框 - 橙色文字 @ 深色背景
+        self.log_text = tk.Text(
+            card,
+            font=("SF Mono", 12),
+            fg="#ff9500",  # 橙色文字
+            bg="#1e1e1e",  # 深色背景
+            highlightthickness=0,
+            borderwidth=0,
+            padx=12,
+            pady=12,
+            state=tk.DISABLED
+        )
         self.log_text.pack(fill=BOTH, expand=True)
-
+        
+        # 配置日志标签颜色
+        self.log_text.tag_configure("info", foreground="#ff9500")
+        self.log_text.tag_configure("progress", foreground="#ffab40")
+        self.log_text.tag_configure("warning", foreground="#ff9800")
+        self.log_text.tag_configure("error", foreground="#f44336")
+        self.log_text.tag_configure("task", foreground="#4fc3f7")
+        self.log_text.tag_configure("success", foreground="#4caf50")
+    
     def _clear_log(self) -> None:
         self.log_text.config(state=tk.NORMAL)
         self.log_text.delete("1.0", END)
         self.log_text.config(state=tk.DISABLED)
-
+    
     def _pick_output_dir(self) -> None:
         p = filedialog.askdirectory(title="选择输出目录")
         if p:
             self.output_dir.set(str(Path(p).resolve()))
-
+    
     def _add_tasks(self) -> None:
         raw = self.url_text.get("1.0", END)
         urls = [x.strip() for x in raw.splitlines() if x.strip()]
         if not urls:
-            messagebox.showwarning("提示", "请填写至少一个URL。")
+            messagebox.showwarning("提示", "请填写至少一个 URL。")
             return
         existing = {t.url for t in self.tasks.values()}
         added = 0
@@ -178,7 +921,7 @@ class App:
         self._refresh_pending_list()
         self.url_text.delete("1.0", END)
         self._append_log(f"[queue] 新增任务 {added} 个。")
-
+    
     def _clear_pending(self) -> None:
         if self.running:
             messagebox.showwarning("提示", "下载进行中，暂不允许清空待下载。")
@@ -188,7 +931,7 @@ class App:
         self.pending_ids = []
         self._refresh_pending_list()
         self._append_log("[queue] 已清空待下载任务。")
-
+    
     def _start_queue(self) -> None:
         if self.running:
             return
@@ -206,13 +949,13 @@ class App:
         except ValueError:
             messagebox.showerror("参数错误", "运行时探测秒数建议 >= 10")
             return
-
+        
         self.running = True
         self.status_text.set("队列下载中...")
-        self.start_btn.config(state=tk.DISABLED)
+        self.start_btn.set_enabled(False)
         self.executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="sitegrab")
         self._dispatch_jobs()
-
+    
     def _dispatch_jobs(self) -> None:
         if not self.running or self.executor is None:
             return
@@ -239,7 +982,7 @@ class App:
             future.add_done_callback(lambda fut: self.log_queue.put(("__TASK_DONE__", fut)))
         self._refresh_pending_list()
         self._update_status_line()
-
+    
     def _run_one_task(
         self,
         tid: int,
@@ -248,15 +991,17 @@ class App:
         browser: str,
         profile: str,
         use_runtime_capture: bool,
-    ) -> ProbeResult:
+    ):
+        from webvidgrab.site_cli import run_site_download
+        
         task = self.tasks[tid]
-
+        
         def log_func(msg: str) -> None:
             self.log_queue.put(("__TASK_LOG__", (tid, msg)))
-
+        
         def progress(downloaded: int, total: int | None) -> None:
             self.log_queue.put(("__PROGRESS__", (tid, downloaded, total)))
-
+        
         return run_site_download(
             page_url=task.url,
             output_dir=out_dir,
@@ -267,7 +1012,7 @@ class App:
             log_func=log_func,
             progress_callback=progress,
         )
-
+    
     def _handle_task_done(self, future: Future) -> None:
         tid = self.active_futures.pop(future, None)
         if tid is None:
@@ -284,7 +1029,7 @@ class App:
             self._dispatch_jobs()
             self._finish_if_idle()
             return
-
+        
         task.log_file = result.log_file
         task.output_file = result.output_file
         if result.ok and result.output_file is not None:
@@ -297,33 +1042,33 @@ class App:
         else:
             task.status = "failed"
             self._append_log(f"[task-{tid}] [failed] {result.log_file}")
-
+        
         self._remove_active_row(tid)
         self._update_status_line()
         self._dispatch_jobs()
         self._finish_if_idle()
-
+    
     def _finish_if_idle(self) -> None:
         if self.running and not self.pending_ids and not self.active_futures:
             self.running = False
             self.status_text.set("全部任务完成")
-            self.start_btn.config(state=tk.NORMAL)
+            self.start_btn.set_enabled(True)
             if self.executor is not None:
                 self.executor.shutdown(wait=False, cancel_futures=False)
                 self.executor = None
-
+    
     def _progress_text(self, task: DownloadTask) -> str:
         if task.total_fragments is None:
             if task.downloaded_fragments > 0:
                 return f"{task.downloaded_fragments}/?"
             return "-"
         return f"{task.downloaded_fragments}/{task.total_fragments}"
-
-    def _short_url(self, url: str, max_len: int = 100) -> str:
+    
+    def _short_url(self, url: str, max_len: int = 80) -> str:
         if len(url) <= max_len:
             return url
         return url[: max_len - 3] + "..."
-
+    
     def _upsert_active_row(self, task: DownloadTask) -> None:
         iid = str(task.task_id)
         values = (self._short_url(task.url), self._progress_text(task), task.status)
@@ -331,45 +1076,58 @@ class App:
             self.active_tree.item(iid, values=values)
         else:
             self.active_tree.insert("", END, iid=iid, values=values)
-
+    
     def _remove_active_row(self, tid: int) -> None:
         iid = str(tid)
         if self.active_tree.exists(iid):
             self.active_tree.delete(iid)
-
+    
     def _refresh_pending_list(self) -> None:
         self.pending_list.delete(0, END)
         for tid in self.pending_ids:
             task = self.tasks[tid]
             self.pending_list.insert(END, f"#{tid} {self._short_url(task.url)}")
-
+    
     def _update_status_line(self) -> None:
         if not self.running:
             return
         self.status_text.set(
-            f"下载中: 正在{len(self.active_futures)} | 待下载{len(self.pending_ids)} | 已完成{len(self.completed_ids)}"
+            f"下载中：正在{len(self.active_futures)} | 待下载{len(self.pending_ids)} | 已完成{len(self.completed_ids)}"
         )
-
-    def _append_log(self, text: str) -> None:
+    
+    def _append_log(self, text: str, level: str = "info") -> None:
+        """添加日志，支持级别和颜色
+        
+        Args:
+            text: 日志内容
+            level: 日志级别 (info, progress, warning, error, task, success)
+        """
         self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(END, text + "\n")
+        
+        # 根据日志级别应用不同颜色标签
+        if level in ["info", "progress", "warning", "error", "task", "success"]:
+            self.log_text.insert(END, text + "\n", level)
+        else:
+            self.log_text.insert(END, text + "\n")
+        
+        # 自动滚动到末尾
         self.log_text.see(END)
         self.log_text.config(state=tk.DISABLED)
-
+    
     def _poll_logs(self) -> None:
         try:
             while True:
                 tag, value = self.log_queue.get_nowait()
-                if tag == "__TASK_LOG__":  # type: ignore[unreachable]
+                if tag == "__TASK_LOG__":
                     tid_str: str
                     msg: str
-                    tid_str, msg = value  # type: ignore[misc]
+                    tid_str, msg = value
                     self._append_log(f"[task-{tid_str}] {msg}")
                 elif tag == "__PROGRESS__":
                     progress_tid_str: str
                     downloaded: int
                     total: int | None
-                    progress_tid_str, downloaded, total = value  # type: ignore[misc]
+                    progress_tid_str, downloaded, total = value
                     tid_str = progress_tid_str
                     task = self.tasks.get(int(tid_str))
                     if task is not None:
@@ -377,7 +1135,7 @@ class App:
                         task.total_fragments = int(total) if total is not None else None
                         self._upsert_active_row(task)
                 elif tag == "__TASK_DONE__":
-                    self._handle_task_done(value)  # type: ignore[arg-type]
+                    self._handle_task_done(value)
                 elif tag == "__ERROR__":
                     self._append_log(f"[error] {value}")
                     messagebox.showerror("执行失败", str(value))
@@ -388,6 +1146,8 @@ class App:
 
 def main() -> int:
     root = tk.Tk()
+    
+    # 创建应用（图标在 App.__init__ 中自动加载）
     App(root)
     root.mainloop()
     return 0

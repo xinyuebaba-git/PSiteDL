@@ -1,0 +1,44 @@
+[url] https://www.toutiao.com/video/7617258761727574570/?log_from=84b785a9c1538_1773577244209
+[browser] chrome:Default
+[page-title] (none)
+[html-candidates] 0
+[runtime-capture] 复用Chrome会话失败: BrowserType.launch_persistent_context: Failed to create a ProcessSingleton for your profile directory. This usually means that the profile is already in use by another instance of Chromium.
+Call log:
+  - <launching> /Applications/Google Chrome.app/Contents/MacOS/Google Chrome --disable-field-trial-config --disable-background-networking --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-back-forward-cache --disable-breakpad --disable-client-side-phishing-detection --disable-component-extensions-with-background-pages --disable-component-update --no-default-browser-check --disable-default-apps --disable-dev-shm-usage --disable-extensions --disable-features=AvoidUnnecessaryBeforeUnloadCheckSync,BoundaryEventDispatchTracksNodeRemoval,DestroyProfileOnBrowserClose,DialMediaRouteProvider,GlobalMediaControls,HttpsUpgrades,LensOverlay,MediaRouter,PaintHolding,ThirdPartyStoragePartitioning,Translate,AutoDeElevate,RenderDocument,OptimizationHints --enable-features=CDPScreenshotNewSurface --allow-pre-commit-input --disable-hang-monitor --disable-ipc-flooding-protection --disable-popup-blocking --disable-prompt-on-repost --disable-renderer-backgrounding --force-color-profile=srgb --metrics-recording-only --no-first-run --password-store=basic --use-mock-keychain --no-service-autorun --export-tagged-pdf --disable-search-engine-choice-screen --unsafely-disable-devtools-self-xss-warnings --edge-skip-compat-layer-relaunch --enable-automation --disable-infobars --disable-search-engine-choice-screen --disable-sync --enable-unsafe-swiftshader --no-sandbox --profile-directory=Default --user-data-dir=/Users/yr001/Library/Application Support/Google/Chrome --remote-debugging-pipe about:blank
+  - <launched> pid=2664
+  - [pid=2664][err] [2664:2796804:0315/202109.716145:ERROR:chrome/browser/process_singleton_posix.cc:345] Failed to create /Users/yr001/Library/Application Support/Google/Chrome/SingletonLock: File exists (17)
+  - [pid=2664][err] [2664:2796804:0315/202109.719399:ERROR:chrome/app/chrome_main_delegate.cc:513] Failed to create a ProcessSingleton for your profile directory. This means that running multiple instances would start multiple browser processes rather than opening a new window in the existing process. Aborting now to avoid profile corruption.
+  - [pid=2664] <gracefully close start>
+  - [pid=2664] <kill>
+  - [pid=2664] <will force kill>
+  - [pid=2664] exception while trying to kill process: Error: kill EPERM
+  - [pid=2664] <process did exit: exitCode=21, signal=null>
+  - [pid=2664] starting temporary directories cleanup
+  - [pid=2664] finished temporary directories cleanup
+  - [pid=2664] <gracefully close end>
+
+[runtime-capture] 使用临时上下文。
+[runtime-capture] 年龄确认命中(js): 5s 后将播放下一个视频 视频加载失败，请刷新重试 立即重试 播放 00:00 / 00:00 直播 全屏 50 自动 蓝光 1080p超清 720p标清 48
+[runtime-capture] 已自动处理年龄确认流程。
+[runtime-capture] 未检测到年龄确认按钮（可能文案/结构特殊或在验证码页）。
+[runtime-capture] 已打开页面，等待 30s 捕获播放请求...
+[runtime-candidates] 0
+[all-candidates] 0
+[selected-url] https://www.toutiao.com/video/7617258761727574570/?log_from=84b785a9c1538_1773577244209
+[download-cmd] /Users/yr001/.openclaw/workspace/PSiteDL/.venv/bin/yt-dlp --no-playlist --newline --progress --progress-template download:[site-progress] %(progress.fragment_index)s/%(progress.fragment_count)s --add-header Referer:https://www.toutiao.com/video/7617258761727574570/?log_from=84b785a9c1538_1773577244209 --add-header User-Agent:Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 --format bv*+ba/b --merge-output-format mp4 --output /Users/yr001/Downloads/%(title)s [%(id)s].%(ext)s --print after_move:filepath https://www.toutiao.com/video/7617258761727574570/?log_from=84b785a9c1538_1773577244209
+[download-exit] 0
+[download-output]
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+[site-progress] NA/NA
+/Users/yr001/Downloads/2026北京亦庄人形机器人半马完成首场练习测试 [7617258761727574570].mp4
