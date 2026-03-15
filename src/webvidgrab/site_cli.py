@@ -6,10 +6,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 from urllib import parse as urlparse
 from urllib import request as urlrequest
 
@@ -37,7 +37,8 @@ def _fetch_text(url: str, referer: str | None = None) -> str:
     req = urlrequest.Request(url, headers=headers)
     with urlrequest.urlopen(req, timeout=25) as resp:
         charset = resp.headers.get_content_charset() or "utf-8"
-        return resp.read().decode(charset, errors="ignore")
+        result: str = resp.read().decode(charset, errors="ignore")
+        return result
 
 
 def _sanitize_filename_stem(stem: str) -> str:
@@ -96,7 +97,10 @@ def _extract_candidates(html: str, base_url: str) -> list[str]:
             low = item.lower()
             if not low.startswith(("http://", "https://")):
                 continue
-            if any(k in low for k in (".m3u8", ".mpd", ".mp4", ".webm", ".m4s", ".ts", "manifest", "playlist")):
+            if any(
+                k in low
+                for k in (".m3u8", ".mpd", ".mp4", ".webm", ".m4s", ".ts", "manifest", "playlist")
+            ):
                 urls.append(item)
     dedup = list(dict.fromkeys(urls))
     dedup.sort(key=_candidate_score, reverse=True)
@@ -111,7 +115,10 @@ def _export_browser_cookies(
     ytdlp_cmd = _resolve_ytdlp_cmd(log=log)
     if not ytdlp_cmd:
         return None
-    out = Path(tempfile.gettempdir()) / f"sitegrab-cookies-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+    out = (
+        Path(tempfile.gettempdir())
+        / f"sitegrab-cookies-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
+    )
     browser_arg = f"{browser}:{profile}" if profile else browser
     cmd = [
         *ytdlp_cmd,
@@ -138,7 +145,11 @@ def _resolve_ytdlp_cmd(log: Callable[[str], None] | None = None) -> list[str] | 
     # Prefer current interpreter's module to avoid PATH issues when app is launched
     # with python -m ... from a venv without activation.
     check = subprocess.run(
-        [sys.executable, "-c", "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('yt_dlp') else 1)"]
+        [
+            sys.executable,
+            "-c",
+            "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('yt_dlp') else 1)",
+        ]
     )
     if check.returncode == 0:
         return [sys.executable, "-m", "yt_dlp"]
@@ -149,8 +160,7 @@ def _resolve_ytdlp_cmd(log: Callable[[str], None] | None = None) -> list[str] | 
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-U", "yt-dlp"],
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
     except Exception as exc:
@@ -159,7 +169,11 @@ def _resolve_ytdlp_cmd(log: Callable[[str], None] | None = None) -> list[str] | 
         return None
 
     check2 = subprocess.run(
-        [sys.executable, "-c", "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('yt_dlp') else 1)"]
+        [
+            sys.executable,
+            "-c",
+            "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('yt_dlp') else 1)",
+        ]
     )
     if check2.returncode == 0:
         if log:
@@ -267,9 +281,7 @@ def _auto_confirm_age_gate(page, log: Callable[[str], None], quiet: bool = False
 
     def _js_scan_and_click(frame) -> str:
         try:
-            return str(
-                frame.evaluate(
-                    """() => {
+            return str(frame.evaluate("""() => {
                         const tokens = [
                           '18+','年满18','滿18','over 18','i am 18','i am over 18','adult',
                           'continue','enter','agree','yes','proceed','进入','進入','同意'
@@ -310,18 +322,14 @@ def _auto_confirm_age_gate(page, log: Callable[[str], None], quiet: bool = False
                           return best.text || 'matched-by-event';
                         } catch (_) {}
                         return '';
-                    }"""
-                )
-            ).strip()
+                    }""")).strip()
         except Exception:
             return ""
 
     def _shadow_scan_click(page_obj) -> str:
         # Some sites render age gate in shadow root; scan recursively in main document.
         try:
-            return str(
-                page_obj.evaluate(
-                    """() => {
+            return str(page_obj.evaluate("""() => {
                         const tokens = ['18+','年满18','滿18','over 18','i am 18','continue','enter','agree','进入','進入'];
                         const norm = s => (s || '').toLowerCase().replace(/\\s+/g, ' ').trim();
                         const visible = (el) => {
@@ -348,9 +356,7 @@ def _auto_confirm_age_gate(page, log: Callable[[str], None], quiet: bool = False
                           try { el.click(); return text.slice(0, 80); } catch (_) {}
                         }
                         return '';
-                    }"""
-                )
-            ).strip()
+                    }""")).strip()
         except Exception:
             return ""
 
@@ -396,16 +402,12 @@ def _auto_confirm_age_gate(page, log: Callable[[str], None], quiet: bool = False
 
         # Early stop if real video element is visible and not paused by overlay.
         try:
-            has_video = bool(
-                page.evaluate(
-                    """() => {
+            has_video = bool(page.evaluate("""() => {
                         const v = document.querySelector('video');
                         if (!v) return false;
                         const r = v.getBoundingClientRect();
                         return r.width > 8 && r.height > 8;
-                    }"""
-                )
-            )
+                    }"""))
             if has_video and hit:
                 break
         except Exception:
@@ -438,7 +440,8 @@ def _capture_runtime_candidates(
     def maybe_add(u: str) -> None:
         low = (u or "").lower()
         if low.startswith(("http://", "https://")) and any(
-            x in low for x in (".m3u8", ".mpd", ".mp4", ".webm", ".m4s", ".ts", "manifest", "playlist")
+            x in low
+            for x in (".m3u8", ".mpd", ".mp4", ".webm", ".m4s", ".ts", "manifest", "playlist")
         ):
             collected.append(u)
 
@@ -488,13 +491,11 @@ def _capture_runtime_candidates(
             except Exception:
                 pass
             try:
-                page.evaluate(
-                    """() => {
+                page.evaluate("""() => {
                         for (const v of Array.from(document.querySelectorAll('video'))) {
                             try { v.muted = true; const p = v.play(); if (p?.catch) p.catch(() => {}); } catch (_) {}
                         }
-                    }"""
-                )
+                    }""")
             except Exception:
                 pass
 
@@ -516,7 +517,15 @@ def _probe_height(url: str, referer: str, log_lines: list[str]) -> int:
     ytdlp_cmd = _resolve_ytdlp_cmd()
     if not ytdlp_cmd:
         return 0
-    cmd = [*ytdlp_cmd, "--add-header", f"Referer:{referer}", "--add-header", f"User-Agent:{DEFAULT_UA}", "--list-formats", url]
+    cmd = [
+        *ytdlp_cmd,
+        "--add-header",
+        f"Referer:{referer}",
+        "--add-header",
+        f"User-Agent:{DEFAULT_UA}",
+        "--list-formats",
+        url,
+    ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     log_lines.append(f"[probe-candidate] {url}")
     log_lines.append(f"[probe-candidate-exit] {proc.returncode}")
@@ -599,7 +608,9 @@ def _download_with_ytdlp(
         target_url,
     ]
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1
+    )
     lines: list[str] = []
     output_path: Path | None = None
     downloaded = 0
@@ -696,7 +707,12 @@ def run_site_download(
     progress_callback: Callable[[int, int | None], None] | None = None,
 ) -> ProbeResult:
     log_lines: list[str] = []
-    log_file = Path.cwd() / "logs" / "sitegrab" / f"sitegrab-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+    log_file = (
+        Path.cwd()
+        / "logs"
+        / "sitegrab"
+        / f"sitegrab-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
+    )
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
     def log(msg: str) -> None:

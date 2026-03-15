@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import queue
+import tkinter as tk
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import BOTH, END, LEFT, W, filedialog, messagebox, ttk
-import tkinter as tk
 
 from webvidgrab.site_cli import ProbeResult, run_site_download
 
@@ -53,13 +53,19 @@ class App:
         form = ttk.LabelFrame(top, text="任务输入", padding=10)
         form.pack(fill=BOTH)
 
-        ttk.Label(form, text="网页播放URL（每行一个）").grid(row=0, column=0, sticky=W, padx=(0, 8), pady=4)
+        ttk.Label(form, text="网页播放URL（每行一个）").grid(
+            row=0, column=0, sticky=W, padx=(0, 8), pady=4
+        )
         self.url_text = tk.Text(form, height=3)
         self.url_text.grid(row=0, column=1, columnspan=3, sticky="ew", pady=4)
 
         ttk.Label(form, text="输出目录").grid(row=1, column=0, sticky=W, padx=(0, 8), pady=4)
-        ttk.Entry(form, textvariable=self.output_dir).grid(row=1, column=1, columnspan=2, sticky="ew", pady=4)
-        ttk.Button(form, text="浏览", command=self._pick_output_dir).grid(row=1, column=3, sticky="ew", pady=4)
+        ttk.Entry(form, textvariable=self.output_dir).grid(
+            row=1, column=1, columnspan=2, sticky="ew", pady=4
+        )
+        ttk.Button(form, text="浏览", command=self._pick_output_dir).grid(
+            row=1, column=3, sticky="ew", pady=4
+        )
 
         ttk.Label(form, text="浏览器").grid(row=2, column=0, sticky=W, padx=(0, 8), pady=4)
         ttk.Combobox(
@@ -72,16 +78,16 @@ class App:
         ttk.Entry(form, textvariable=self.profile).grid(row=2, column=3, sticky="ew", pady=4)
 
         ttk.Label(form, text="运行时探测秒数").grid(row=3, column=0, sticky=W, padx=(0, 8), pady=4)
-        ttk.Entry(form, textvariable=self.capture_seconds).grid(row=3, column=1, sticky="ew", pady=4)
+        ttk.Entry(form, textvariable=self.capture_seconds).grid(
+            row=3, column=1, sticky="ew", pady=4
+        )
         ttk.Checkbutton(
             form,
             text="启用运行时探测(会打开浏览器并抓播放请求)",
             variable=self.use_runtime_capture,
         ).grid(row=3, column=2, columnspan=2, sticky=W, pady=4)
 
-        note = (
-            "支持并发3线程下载；显示切片进度(已下载/总切片)；完成后自动进入“已完成任务”。"
-        )
+        note = "支持并发3线程下载；显示切片进度(已下载/总切片)；完成后自动进入“已完成任务”。"
         ttk.Label(form, text=note, foreground="#666").grid(
             row=4, column=0, columnspan=4, sticky=W, pady=(4, 2)
         )
@@ -354,12 +360,18 @@ class App:
         try:
             while True:
                 tag, value = self.log_queue.get_nowait()
-                if tag == "__TASK_LOG__":
-                    tid, msg = value  # type: ignore[misc]
-                    self._append_log(f"[task-{tid}] {msg}")
+                if tag == "__TASK_LOG__":  # type: ignore[unreachable]
+                    tid_str: str
+                    msg: str
+                    tid_str, msg = value  # type: ignore[misc]
+                    self._append_log(f"[task-{tid_str}] {msg}")
                 elif tag == "__PROGRESS__":
-                    tid, downloaded, total = value  # type: ignore[misc]
-                    task = self.tasks.get(int(tid))
+                    progress_tid_str: str
+                    downloaded: int
+                    total: int | None
+                    progress_tid_str, downloaded, total = value  # type: ignore[misc]
+                    tid_str = progress_tid_str
+                    task = self.tasks.get(int(tid_str))
                     if task is not None:
                         task.downloaded_fragments = int(downloaded)
                         task.total_fragments = int(total) if total is not None else None
