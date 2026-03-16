@@ -610,6 +610,7 @@ class App:
         
         self.output_dir = tk.StringVar(value=str((Path.home() / "Downloads").resolve()))
         self.browser = tk.StringVar(value="chrome")
+        # 配置文件暂不对用户开放，统一使用默认值
         self.profile = tk.StringVar(value="Default")
         self.capture_seconds = tk.StringVar(value="30")
         self.use_runtime_capture = tk.BooleanVar(value=True)
@@ -723,11 +724,11 @@ class App:
         
         # 左侧操作区容器
         left_frame = tk.Frame(paned, bg=DarkOrangeColors.BACKGROUND)
-        paned.add(left_frame, minsize=700, width=720)
+        paned.add(left_frame, minsize=650)
         
         # 右侧日志区容器
         right_frame = tk.Frame(paned, bg=DarkOrangeColors.BACKGROUND)
-        paned.add(right_frame, minsize=450, width=480)
+        paned.add(right_frame, minsize=300)
         
         # 构建左侧操作区
         self._build_left_panel(left_frame)
@@ -735,11 +736,20 @@ class App:
         # 构建右侧日志区
         self._build_right_panel(right_frame)
         
-        # 设置初始分栏比例 (60:40)
-        # 设置初始分隔位置 (720px)
-        # 某些 Tk 版本在初次布局阶段调用 sash_pos 会抛 TclError
+        # 设置初始分栏比例 (70:30)
+        self.root.after_idle(lambda: self._set_paned_ratio(paned, 0.7))
+        self.root.after(120, lambda: self._set_paned_ratio(paned, 0.7))
+
+    def _set_paned_ratio(self, paned: tk.PanedWindow, ratio: float) -> None:
+        """在布局稳定后设置分栏比例，避免初始宽度覆盖比例。"""
         try:
-            paned.sash_pos(0, 720)
+            paned.update_idletasks()
+            total_width = max(1, paned.winfo_width())
+            target = int(total_width * ratio)
+            try:
+                paned.sash_place(0, target, 1)
+            except Exception:
+                paned.sash_pos(0, target)
         except Exception:
             pass
 
@@ -747,8 +757,8 @@ class App:
         """为 macOS 系统 Tk 8.5 构建稳定显示的原生界面。"""
         main = ttk.Frame(self.root, padding=16)
         main.pack(fill=BOTH, expand=True)
-        main.columnconfigure(0, weight=3)
-        main.columnconfigure(1, weight=2)
+        main.columnconfigure(0, weight=7)
+        main.columnconfigure(1, weight=3)
         main.rowconfigure(1, weight=1)
 
         header = ttk.Frame(main)
@@ -788,7 +798,7 @@ class App:
         settings = ttk.LabelFrame(left, text="设置")
         settings.grid(row=1, column=0, sticky="ew", pady=(0, 10))
         settings.columnconfigure(1, weight=1)
-        settings.columnconfigure(3, weight=1)
+        settings.columnconfigure(3, weight=2)
 
         ttk.Label(settings, text="浏览器").grid(row=0, column=0, sticky="w", padx=10, pady=(10, 6))
         browser_combo = ttk.Combobox(
@@ -799,28 +809,23 @@ class App:
         )
         browser_combo.grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=(10, 6))
 
-        ttk.Label(settings, text="配置文件").grid(row=0, column=2, sticky="w", padx=(0, 10), pady=(10, 6))
-        ttk.Entry(settings, textvariable=self.profile).grid(
+        ttk.Label(settings, text="输出目录").grid(row=0, column=2, sticky="w", padx=(0, 10), pady=(10, 6))
+        ttk.Entry(settings, textvariable=self.output_dir).grid(
             row=0, column=3, sticky="ew", padx=(0, 10), pady=(10, 6)
         )
-
-        ttk.Label(settings, text="输出目录").grid(row=1, column=0, sticky="w", padx=10, pady=6)
-        ttk.Entry(settings, textvariable=self.output_dir).grid(
-            row=1, column=1, columnspan=2, sticky="ew", padx=(0, 10), pady=6
-        )
         ttk.Button(settings, text="浏览", command=self._pick_output_dir).grid(
-            row=1, column=3, sticky="ew", padx=(0, 10), pady=6
+            row=0, column=4, sticky="ew", padx=(0, 10), pady=(10, 6)
         )
 
-        ttk.Label(settings, text="运行时探测秒数").grid(row=2, column=0, sticky="w", padx=10, pady=(6, 10))
+        ttk.Label(settings, text="运行时探测秒数").grid(row=1, column=0, sticky="w", padx=10, pady=(6, 10))
         ttk.Entry(settings, textvariable=self.capture_seconds).grid(
-            row=2, column=1, sticky="ew", padx=(0, 10), pady=(6, 10)
+            row=1, column=1, sticky="ew", padx=(0, 10), pady=(6, 10)
         )
         ttk.Checkbutton(
             settings,
             text="启用运行时探测（会打开浏览器并抓播放请求）",
             variable=self.use_runtime_capture,
-        ).grid(row=2, column=2, columnspan=2, sticky="w", padx=(0, 10), pady=(6, 10))
+        ).grid(row=2, column=0, columnspan=4, sticky="w", padx=10, pady=(6, 10))
 
         controls = ttk.Frame(left)
         controls.grid(row=2, column=0, sticky="ew", pady=(0, 10))
@@ -874,12 +879,15 @@ class App:
         self.completed_list = tk.Listbox(completed_tab)
         self.completed_list.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
 
-        log_frame = ttk.LabelFrame(right, text="运行日志")
+        log_frame = ttk.LabelFrame(right, text="")
         log_frame.grid(row=0, column=0, sticky="nsew")
         log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        log_frame.rowconfigure(1, weight=1)
+        ttk.Label(log_frame, text="运行日志", foreground="#666666").grid(
+            row=0, column=0, sticky="w", padx=10, pady=(8, 0)
+        )
         self.log_text = tk.Text(log_frame, wrap=tk.WORD)
-        self.log_text.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        self.log_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
     
     def _build_header(self, parent):
         """构建标题区"""
@@ -981,12 +989,11 @@ class App:
         settings_frame = tk.Frame(card, bg=DarkOrangeColors.CARD_BACKGROUND)
         settings_frame.pack(fill=tk.X)
         
-        # 第一行：浏览器、Profile、输出目录
+        # 第一行：浏览器、输出目录
         row1 = tk.Frame(settings_frame, bg=DarkOrangeColors.CARD_BACKGROUND)
         row1.pack(fill=tk.X, pady=(0, 16))
-        row1.grid_columnconfigure(0, weight=1, uniform="settings_row")
-        row1.grid_columnconfigure(1, weight=1, uniform="settings_row")
-        row1.grid_columnconfigure(2, weight=1, uniform="settings_row")
+        row1.grid_columnconfigure(0, weight=1)
+        row1.grid_columnconfigure(1, weight=1)
         
         # 浏览器选择
         browser_frame = self._create_setting_field(
@@ -996,17 +1003,7 @@ class App:
             self.browser
         )
         browser_frame.grid(row=0, column=0, sticky="ew", padx=(0, 16))
-        
-        # 配置文件
-        profile_frame = self._create_setting_field(
-            row1,
-            "配置文件",
-            None,
-            self.profile,
-            is_entry=True
-        )
-        profile_frame.grid(row=0, column=1, sticky="ew", padx=(0, 16))
-        
+
         # 输出目录
         output_frame = self._create_setting_field(
             row1,
@@ -1018,7 +1015,7 @@ class App:
             button_text="浏览",
             button_command=self._pick_output_dir
         )
-        output_frame.grid(row=0, column=2, sticky="ew")
+        output_frame.grid(row=0, column=1, sticky="ew")
         
         # 第二行：运行时探测
         row2 = tk.Frame(settings_frame, bg=DarkOrangeColors.CARD_BACKGROUND)
@@ -1251,8 +1248,18 @@ class App:
     
     def _build_log_card(self, parent):
         """构建日志卡片 - 右侧全屏日志区"""
-        card = DarkOrangeCard(parent, text="运行日志", padding=20)
+        card = DarkOrangeCard(parent, text="", padding=20)
         card.pack(fill=BOTH, expand=True)
+
+        title_label = tk.Label(
+            card,
+            text="运行日志",
+            font=("SF Pro Text", 13, "bold"),
+            fg=DarkOrangeColors.TEXT_HIGHLIGHT,
+            bg=DarkOrangeColors.CARD_BACKGROUND,
+            anchor="w"
+        )
+        title_label.pack(fill=tk.X)
         
         # 日志文本框 - 橙色文字 @ 深色背景
         self.log_text = DarkOrangeText(
@@ -1262,7 +1269,7 @@ class App:
             bg="#1e1e1e",  # 深色背景
             state=tk.DISABLED
         )
-        self.log_text.pack(fill=BOTH, expand=True)
+        self.log_text.pack(fill=BOTH, expand=True, pady=(8, 0))
         
         # 配置日志标签颜色
         self.log_text.tag_configure("info", foreground="#ff9500")
