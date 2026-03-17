@@ -1,474 +1,281 @@
-"""进度显示模块 - 实时下载进度跟踪和显示"""
+"""
+进度跟踪和预测 - Phase 3 实现
 
-from __future__ import annotations
+包含:
+- SpeedHistory: 速度历史记录（环形缓冲区）
+- ETAPredictor: ETA 预测器（指数加权滑动平均）
+- DownloadProgress: 下载进度数据类
+"""
 
-import json
+from collections import deque
+from dataclasses import dataclass, field
 import time
-from collections.abc import Callable
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, TextIO
-
-try:
-    from rich.console import Console
-    from rich.progress import Progress
-
-    RICH_AVAILABLE = True
-except ImportError:
-    RICH_AVAILABLE = False
-    Console = None  # type: ignore
-    Progress = None  # type: ignore
-
-# =============================================================================
-# 下载进度类
-# =============================================================================
+from typing import List, Optional
+import numpy as np
 
 
+@dataclass
+class SpeedHistory:
+    """
+    速度历史记录（环形缓冲区）
+    
+    特性:
+    - 固定大小（最大 60 秒）
+    - O(1) 添加操作
+    - 支持获取最近 N 秒数据
+    - 支持计算平均值
+    """
+    
+    max_seconds: int = 60
+    buffer: deque = field(default_factory=lambda: deque(maxlen=60))
+    timestamps: deque = field(default_factory=lambda: deque(maxlen=60))
+    
+    def __post_init__(self):
+        """确保 deque 有正确的 maxlen"""
+        if not hasattr(self.buffer, 'maxlen'):
+            self.buffer = deque(maxlen=self.max_seconds)
+        if not hasattr(self.timestamps, 'maxlen'):
+            self.timestamps = deque(maxlen=self.max_seconds)
+    
+    def add(self, speed_bps: float, timestamp: Optional[float] = None):
+        """
+        添加速度样本
+        
+        Args:
+            speed_bps: 速度（bits per second）
+            timestamp: 时间戳（默认当前时间）
+        """
+        if timestamp is None:
+            timestamp = time.time()
+        
+        self.buffer.append(speed_bps)
+        self.timestamps.append(timestamp)
+    
+    def get_recent(self, seconds: int = 10) -> np.ndarray:
+        """
+        获取最近 N 秒的数据
+        
+        Args:
+            seconds: 获取最近多少秒的数据
+            
+        Returns:
+            np.ndarray: 速度数组
+        """
+        if not self.buffer or not self.timestamps:
+            return np.array([])
+        
+        cutoff = self.timestamps[-1] - seconds
+        indices = [i for i, t in enumerate(self.timestamps) if t >= cutoff]
+        
+        if not indices:
+            return np.array([])
+        
+        return np.array([self.buffer[i] for i in indices])
+    
+    def get_average(self, seconds: int = 10) -> float:
+        """
+        计算最近 N 秒的平均速度
+        
+        Args:
+            seconds: 计算多少秒的平均值
+            
+        Returns:
+            float: 平均速度（bps）
+        """
+        recent = self.get_recent(seconds)
+        return float(np.mean(recent)) if len(recent) > 0 else 0.0
+    
+    def get_max(self, seconds: int = 60) -> float:
+        """
+        获取 N 秒内的峰值速度
+        
+        Args:
+            seconds: 获取多少秒内的峰值
+            
+        Returns:
+            float: 峰值速度
+        """
+        recent = self.get_recent(seconds)
+        return float(np.max(recent)) if len(recent) > 0 else 0.0
+    
+    def clear(self):
+        """清空历史记录"""
+        self.buffer.clear()
+        self.timestamps.clear()
+
+
+@dataclass
+class ETAPredictor:
+    """
+    ETA 预测器（指数加权滑动平均）
+    
+    特性:
+    - 指数平滑避免 ETA 跳动
+    - 可配置平滑因子
+    - 支持格式化显示
+    """
+    
+    alpha: float = 0.3  # 平滑因子
+    ema_speed: Optional[float] = field(default=None, init=False)
+    
+    def update(self, current_speed: float) -> float:
+        """
+        更新速度并返回平滑后的速度
+        
+        Args:
+            current_speed: 当前速度（bps）
+            
+        Returns:
+            float: 平滑后的速度
+        """
+        if self.ema_speed is None:
+            self.ema_speed = current_speed
+        else:
+            # 指数加权移动平均
+            self.ema_speed = (self.alpha * current_speed + 
+                            (1 - self.alpha) * self.ema_speed)
+        
+        return float(self.ema_speed)
+    
+    def calculate_eta(self, remaining_bytes: int) -> int:
+        """
+        计算剩余时间（秒）
+        
+        Args:
+            remaining_bytes: 剩余字节数
+            
+        Returns:
+            int: 剩余时间（秒），无法计算返回 inf
+        """
+        if self.ema_speed is None or self.ema_speed <= 0:
+            return float('inf')
+        
+        return int(remaining_bytes / self.ema_speed)
+    
+    def format_eta(self, seconds: int) -> str:
+        """
+        格式化 ETA 显示
+        
+        Args:
+            seconds: 秒数
+            
+        Returns:
+            str: 格式化字符串（HH:MM:SS 或 MM:SS）
+        """
+        if seconds == float('inf') or seconds < 0:
+            return "--:--"
+        
+        hours = int(seconds) // 3600
+        minutes = (int(seconds) % 3600) // 60
+        secs = int(seconds) % 60
+        
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+        else:
+            return f"{minutes:02d}:{secs:02d}"
+    
+    def reset(self):
+        """重置预测器"""
+        self.ema_speed = None
+
+
+@dataclass
 class DownloadProgress:
-    """单个文件下载进度跟踪"""
-
-    def __init__(
-        self,
-        total: int,
-        callback: Callable[[DownloadProgress], None] | None = None,
-    ) -> None:
-        """
-        初始化进度
-
-        Args:
-            total: 总字节数
-            callback: 进度更新回调函数
-        """
-        self.total = total
-        self.current = 0
-        self.start_time = time.time()
-        self.callback = callback
-
-    def update(self, bytes_downloaded: int) -> None:
-        """
-        更新进度
-
-        Args:
-            bytes_downloaded: 已下载的字节数
-        """
-        self.current = bytes_downloaded
-        if self.callback:
-            self.callback(self)
-
+    """
+    下载进度数据类
+    
+    整合速度历史、ETA 预测和进度信息
+    """
+    
+    downloaded_bytes: int = 0
+    total_bytes: int = 0
+    speed_history: SpeedHistory = field(default_factory=SpeedHistory)
+    eta_predictor: ETAPredictor = field(default_factory=ETAPredictor)
+    peak_speed: float = 0.0
+    start_time: float = field(default_factory=time.time)
+    
     @property
-    def percentage(self) -> float:
-        """下载百分比"""
-        if self.total <= 0:
+    def progress(self) -> float:
+        """下载进度（0.0 - 1.0）"""
+        if self.total_bytes == 0:
             return 0.0
-        return (self.current / self.total) * 100.0
-
-    def is_complete(self) -> bool:
-        """是否完成"""
-        return self.current >= self.total
-
-    def get_speed(self) -> float:
+        return min(1.0, self.downloaded_bytes / self.total_bytes)
+    
+    @property
+    def current_speed(self) -> float:
+        """当前速度（最近 10 秒平均）"""
+        return self.speed_history.get_average(seconds=10)
+    
+    @property
+    def average_speed(self) -> float:
+        """平均速度（全部历史）"""
+        return self.speed_history.get_average(seconds=60)
+    
+    @property
+    def eta_seconds(self) -> int:
+        """剩余时间（秒）"""
+        remaining = self.total_bytes - self.downloaded_bytes
+        return self.eta_predictor.calculate_eta(remaining)
+    
+    @property
+    def eta_formatted(self) -> str:
+        """格式化的 ETA"""
+        return self.eta_predictor.format_eta(self.eta_seconds)
+    
+    def update(self, downloaded_bytes: int, speed_bps: float):
         """
-        获取下载速度 (bytes/s)
-
-        Returns:
-            下载速度（字节/秒）
-        """
-        elapsed = time.time() - self.start_time
-        if elapsed <= 0:
-            return 0.0
-        return self.current / elapsed
-
-    def get_eta(self) -> float:
-        """
-        获取预计剩余时间 (秒)
-
-        Returns:
-            预计剩余时间（秒）
-        """
-        speed = self.get_speed()
-        if speed <= 0:
-            return 0.0
-        remaining = self.total - self.current
-        return remaining / speed
-
-
-# =============================================================================
-# 进度条渲染
-# =============================================================================
-
-
-def render_progress_bar(
-    current: int,
-    total: int,
-    width: int = 40,
-    filled_char: str = "█",
-    empty_char: str = "░",
-) -> str:
-    """
-    渲染文本进度条
-
-    Args:
-        current: 当前字节数
-        total: 总字节数
-        width: 进度条宽度
-        filled_char: 已填充字符
-        empty_char: 未填充字符
-
-    Returns:
-        进度条字符串
-
-    Example:
-        bar = render_progress_bar(50, 100, width=20)
-        print(f"[{bar}]")
-    """
-    if total <= 0:
-        return empty_char * width
-
-    percentage = current / total
-    filled_width = int(percentage * width)
-    empty_width = width - filled_width
-
-    return filled_char * filled_width + empty_char * empty_width
-
-
-def render_progress_info(
-    filename: str,
-    current: int,
-    total: int,
-    speed: float,
-    eta: float,
-) -> str:
-    """
-    渲染完整进度信息
-
-    Args:
-        filename: 文件名
-        current: 当前字节数
-        total: 总字节数
-        speed: 下载速度
-        eta: 预计剩余时间
-
-    Returns:
-        格式化的进度信息字符串
-
-    Example:
-        info = render_progress_info("video.mp4", 500, 1000, 100, 5)
-        print(info)
-    """
-    percentage = (current / total * 100) if total > 0 else 0.0
-
-    # 格式化速度
-    if speed >= 1024 * 1024:
-        speed_str = f"{speed / (1024 * 1024):.1f} MB/s"
-    elif speed >= 1024:
-        speed_str = f"{speed / 1024:.1f} KB/s"
-    else:
-        speed_str = f"{speed:.0f} B/s"
-
-    # 格式化 ETA
-    if eta >= 3600:
-        eta_str = f"{eta / 3600:.1f}h"
-    elif eta >= 60:
-        eta_str = f"{eta / 60:.1f}m"
-    else:
-        eta_str = f"{eta:.0f}s"
-
-    # 进度条
-    bar = render_progress_bar(current, total, width=30)
-
-    return f"{filename}: [{bar}] {percentage:.1f}% ({speed_str}, ETA: {eta_str})"
-
-
-# =============================================================================
-# Rich 进度显示
-# =============================================================================
-
-
-class RichProgressDisplay:
-    """Rich 库进度显示"""
-
-    def __init__(self, output: TextIO | None = None) -> None:
-        """
-        初始化 Rich 进度显示
-
+        更新下载进度
+        
         Args:
-            output: 输出流（可选，默认 stdout）
+            downloaded_bytes: 已下载字节数
+            speed_bps: 当前速度（bps）
         """
-        self.output = output
-        self._tasks: dict[str, dict[str, Any]] = {}
-        self._console: dict[str, Any] | None = None
-
-    def _get_console(self) -> dict[str, Any]:
-        """懒加载 Rich Console"""
-        if self._console is None:
-            try:
-                from rich.console import Console
-                from rich.progress import BarColumn, TaskProgressColumn, TextColumn
-
-                self._console = {
-                    "console": Console(file=self.output),
-                    "progress": None,
-                    "columns": [
-                        TextColumn("[progress.description]{task.description}"),
-                        BarColumn(),
-                        TaskProgressColumn(),
-                    ],
-                }
-            except ImportError:
-                # Rich 未安装，降级到简单模式
-                self._console = {"console": None, "progress": None}
-        return self._console
-
-    def start_task(
-        self,
-        description: str,
-        total: int,
-    ) -> str:
-        """
-        开始任务
-
-        Args:
-            description: 任务描述
-            total: 总字节数
-
-        Returns:
-            任务 ID
-        """
-        import uuid
-
-        task_id = str(uuid.uuid4())[:8]
-
-        self._tasks[task_id] = {
-            "description": description,
-            "total": total,
-            "completed": 0,
-            "started": True,
-        }
-
-        # 如果 Rich 可用，创建真实进度任务
-        console_data = self._get_console()
-        if console_data["console"] and console_data["progress"] is None:
-            from rich.progress import Progress
-
-            progress_instance: Progress = Progress(
-                *console_data["columns"],
-                console=console_data["console"],
-            )
-            console_data["progress"] = progress_instance
-            if progress_instance:
-                progress_instance.start()  # type: ignore[union-attr]
-
-        if console_data["progress"]:
-            # 使用简单字典存储，不直接使用 Rich TaskID
-            pass
-
-        return task_id
-
-    def update_task(
-        self,
-        task_id: str,
-        completed: int,
-    ) -> None:
-        """
-        更新任务进度
-
-        Args:
-            task_id: 任务 ID
-            completed: 已完成的字节数
-        """
-        if task_id not in self._tasks:
-            return
-
-        self._tasks[task_id]["completed"] = completed
-
-        # 如果 Rich 可用，更新显示
-        console_data = self._get_console()
-        if console_data["progress"]:
-            # 简单实现：输出到控制台
-            task = self._tasks[task_id]
-            percentage = (task["completed"] / task["total"] * 100) if task["total"] > 0 else 0
-            console_data["console"].print(f"\r{task['description']}: {percentage:.1f}%", end="")
-
-    def stop(self) -> None:
-        """停止显示"""
-        console_data = self._get_console()
-        if console_data["progress"]:
-            console_data["progress"].stop()
-            console_data["progress"] = None
-
-
-# =============================================================================
-# 多文件进度跟踪
-# =============================================================================
-
-
-@dataclass
-class FileProgress:
-    """单个文件进度"""
-
-    filename: str
-    total: int
-    current: int = 0
-
-
-class MultiProgressTracker:
-    """多文件进度跟踪器"""
-
-    def __init__(self, total_files: int) -> None:
-        """
-        初始化多文件跟踪器
-
-        Args:
-            total_files: 总文件数
-        """
-        self.total_files = total_files
-        self._files: dict[str, FileProgress] = {}
-
-    def add_file(
-        self,
-        filename: str,
-        size: int,
-    ) -> None:
-        """
-        添加文件到跟踪
-
-        Args:
-            filename: 文件名
-            size: 文件大小（字节）
-        """
-        self._files[filename] = FileProgress(
-            filename=filename,
-            total=size,
-            current=0,
-        )
-
-    def update_file(
-        self,
-        filename: str,
-        bytes_downloaded: int,
-    ) -> None:
-        """
-        更新文件进度
-
-        Args:
-            filename: 文件名
-            bytes_downloaded: 已下载的字节数
-        """
-        if filename not in self._files:
-            return
-
-        self._files[filename].current = bytes_downloaded
-
-    def overall_percentage(self) -> float:
-        """
-        获取整体进度百分比
-
-        Returns:
-            整体进度百分比
-        """
-        if not self._files:
-            return 0.0
-
-        total_bytes = sum(f.total for f in self._files.values())
-        current_bytes = sum(f.current for f in self._files.values())
-
-        if total_bytes <= 0:
-            return 0.0
-
-        return (current_bytes / total_bytes) * 100.0
-
-    def get_summary(self) -> dict[str, Any]:
-        """
-        获取进度摘要
-
-        Returns:
-            进度摘要字典
-        """
-        total_bytes = sum(f.total for f in self._files.values())
-        current_bytes = sum(f.current for f in self._files.values())
-        completed_files = sum(1 for f in self._files.values() if f.current >= f.total)
-
+        self.downloaded_bytes = downloaded_bytes
+        
+        # 更新速度历史
+        self.speed_history.add(speed_bps)
+        
+        # 更新峰值速度
+        current_max = self.speed_history.get_max()
+        if current_max > self.peak_speed:
+            self.peak_speed = current_max
+        
+        # 更新 ETA 预测
+        self.eta_predictor.update(speed_bps)
+    
+    def to_dict(self) -> dict:
+        """转换为字典"""
         return {
-            "total_files": self.total_files,
-            "completed": completed_files,  # 简化键名以便测试
-            "completed_files": completed_files,
-            "total_bytes": total_bytes,
-            "current_bytes": current_bytes,
-            "overall_percentage": self.overall_percentage(),
-            "total": self.total_files,  # 简化键名以便测试
-            "files": {
-                name: {
-                    "total": fp.total,
-                    "current": fp.current,
-                    "percentage": (fp.current / fp.total * 100) if fp.total > 0 else 0.0,
-                }
-                for name, fp in self._files.items()
-            },
+            "progress": self.progress,
+            "downloaded_bytes": self.downloaded_bytes,
+            "total_bytes": self.total_bytes,
+            "current_speed": self.current_speed,
+            "average_speed": self.average_speed,
+            "peak_speed": self.peak_speed,
+            "eta_seconds": self.eta_seconds,
+            "eta_formatted": self.eta_formatted,
         }
 
 
-# =============================================================================
-# 进度持久化
-# =============================================================================
-
-
-@dataclass
-class ProgressState:
-    """进度状态"""
-
-    total: int
-    current: int
-    start_time: float
-
-
-def save_progress(
-    progress: DownloadProgress,
-    state_file: Path,
-) -> None:
-    """
-    保存进度状态
-
-    Args:
-        progress: 进度对象
-        state_file: 状态文件路径
-    """
-    state = ProgressState(
-        total=progress.total,
-        current=progress.current,
-        start_time=progress.start_time,
-    )
-
-    state_file.parent.mkdir(parents=True, exist_ok=True)
-
-    with open(state_file, "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "total": state.total,
-                "current": state.current,
-                "start_time": state.start_time,
-            },
-            f,
-            indent=2,
-        )
-
-
-def load_progress(
-    state_file: Path,
-) -> DownloadProgress:
-    """
-    加载进度状态
-
-    Args:
-        state_file: 状态文件路径
-
-    Returns:
-        进度对象
-    """
-    with open(state_file, encoding="utf-8") as f:
-        data = json.load(f)
-
-    progress = DownloadProgress(total=data["total"])
-    progress.current = data["current"]
-    progress.start_time = data["start_time"]
-
-    return progress
+if __name__ == "__main__":
+    # 简单测试
+    print("Testing SpeedHistory...")
+    history = SpeedHistory()
+    for i in range(100):
+        history.add(i * 1000, time.time() + i)
+    print(f"Buffer size: {len(history.buffer)} (max 60)")
+    print(f"Recent 10s: {len(history.get_recent(10))} samples")
+    print(f"Average: {history.get_average():.2f} bps")
+    
+    print("\nTesting ETAPredictor...")
+    predictor = ETAPredictor()
+    for _ in range(20):
+        predictor.update(1_000_000)
+    eta = predictor.calculate_eta(10_000_000)
+    print(f"ETA for 10MB at 1Mbps: {predictor.format_eta(eta)}")
+    
+    print("\nTesting DownloadProgress...")
+    progress = DownloadProgress(total_bytes=100_000_000)
+    for i in range(10):
+        progress.update(i * 10_000_000, 1_000_000 + i * 100_000)
+        print(f"Progress: {progress.progress:.1%}, Speed: {progress.current_speed/1e6:.2f}Mbps, ETA: {progress.eta_formatted}")
