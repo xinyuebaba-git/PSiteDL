@@ -6,8 +6,8 @@
 """
 
 import pyqtgraph as pg
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QGridLayout
-from PyQt5.QtCore import QTimer
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QGridLayout, QHBoxLayout
+from PyQt5.QtCore import QTimer, Qt
 import numpy as np
 
 from .progress import SpeedHistory, ETAPredictor, DownloadProgress
@@ -41,19 +41,54 @@ class ProgressChartWidget(QWidget):
     
     def _init_ui(self):
         """初始化 UI"""
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(10)
+        
+        # 主布局：左侧参数区 (70%)，右侧日志区 (30%)
+        content_layout = QHBoxLayout()
+        content_layout.setStretch(0, 7)  # 参数区 70%
+        content_layout.setStretch(1, 3)  # 日志区 30%
+        
+        # 左侧：参数区（图表和统计信息）
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 5, 0)
         
         # 统计信息面板
-        self._init_stats_panel(layout)
+        self._init_stats_panel(left_layout)
         
         # 速度图表
-        self._init_speed_chart(layout)
+        self._init_speed_chart(left_layout)
         
         # 带宽使用图表（可选）
-        self._init_bandwidth_chart(layout)
+        self._init_bandwidth_chart(left_layout)
         
-        self.setLayout(layout)
+        # 右侧：日志区
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(5, 0, 0, 0)
+        
+        self.log_display = QLabel("等待下载...")
+        self.log_display.setWordWrap(True)
+        self.log_display.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.log_display.setStyleSheet("""
+            QLabel {
+                font-size: 12px;
+                padding: 10px;
+                background-color: #1e1e1e;
+                color: #00ff00;
+                border-radius: 5px;
+                font-family: 'Monaco', 'Courier New', monospace;
+            }
+        """)
+        right_layout.addWidget(self.log_display)
+        
+        # 添加到主布局
+        content_layout.addWidget(left_panel)
+        content_layout.addWidget(right_panel)
+        main_layout.addLayout(content_layout)
+        
+        self.setLayout(main_layout)
     
     def _init_stats_panel(self, layout):
         """初始化统计信息面板"""
